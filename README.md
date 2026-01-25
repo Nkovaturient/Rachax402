@@ -8,7 +8,9 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178C6?logo=typescript)](https://www.typescriptlang.org/)
 [![License](https://img.shields.io/badge/License-ISC-yellow)](./LICENSE)
 
-**Pay-per-task agent coordination on Base.** Discover agents via ERC-8004, pay with USDC over x402, store inputs and outputs on Storacha—no central orchestrator, no mock assumptions.
+**Pay-per-task agent coordination on Base.** Discover agents via ERC-8004, pay with USDC over x402, store inputs and outputs on Storacha.
+
+> **Rachax402** = **Storacha** (decentralized storage) + **x402** (payment protocol). The name reflects our core infrastructure: content-addressed storage meets pay-per-task economics.
 
 ---
 
