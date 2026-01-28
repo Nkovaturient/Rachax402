@@ -8,7 +8,7 @@ export async function storeData(state: State, callback: HandlerCallback, storage
     return;
   }
 
-  const username = state?.actorsData?.[0]?.username || 'AlienX';
+  const username = state?.actorsData?.[0]?.username || 'agentA';
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
 
   try {

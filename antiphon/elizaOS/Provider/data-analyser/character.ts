@@ -7,9 +7,10 @@ export const agentProvider: Character = mergeCharacterDefaults({
   plugins: [storagePlugin as unknown as Plugin],
   modelProvider: "OPENROUTER" as any,
   settings: {
+    walletRef: "agentB",
     secrets: {
-      STORACHA__AGENT_PRIVATE_KEY: process.env.STORACHA_AGENT_PRIVATE_KEY,
-      STORACHA__AGENT_DELEGATION: process.env.STORACHA_AGENT_DELEGATION,
+      STORACHA_AGENT_PRIVATE_KEY: process.env.STORACHA_AGENT_PRIVATE_KEY,
+      STORACHA_AGENT_DELEGATION: process.env.STORACHA_AGENT_DELEGATION,
     },
     voice: {
       model: "en_US-hfc_female-medium",

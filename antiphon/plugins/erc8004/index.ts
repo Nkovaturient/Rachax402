@@ -1,23 +1,19 @@
 import { elizaLogger } from "@elizaos/core";
-import { createPublicClient, createWalletClient, http, type Address, type Hex } from "viem";
-import { privateKeyToAccount } from "viem/accounts";
+import type { Address } from "viem";
 import { baseSepolia } from "viem/chains";
+import { WalletService } from "../../shared/blockchain/index.js";
 import type { ActionHandlerCallback, ActionHandlerState } from "../../index.js";
 
-interface ERC8004Config {
+export interface ERC8004Config {
   identityRegistryAddress: string;
   reputationRegistryAddress: string;
   rpcUrl: string;
   privateKey: string;
 }
 
-let erc8004Config: ERC8004Config | null = null;
+export function getERC8004Actions(config: ERC8004Config | null) {
+  const walletService = config ? new WalletService(config.rpcUrl) : null;
 
-export function initializeERC8004(config: ERC8004Config) {
-  erc8004Config = config;
-}
-
-export function getERC8004Actions() {
   return {
     AGENT_REGISTER: {
       name: 'AGENT_REGISTER',
@@ -31,7 +27,7 @@ export function getERC8004Actions() {
         _options: unknown,
         callback: ActionHandlerCallback
       ) => {
-        if (!erc8004Config) {
+        if (!config || !walletService) {
           await callback?.({ text: "ERC-8004 not configured. Set BASE_RPC_URL and contract addresses." });
           return;
         }
@@ -43,16 +39,9 @@ export function getERC8004Actions() {
         }
 
         try {
-          const publicClient = createPublicClient({
-            chain: baseSepolia,
-            transport: http(erc8004Config.rpcUrl),
-          });
-
-          const walletClient = createWalletClient({
-            chain: baseSepolia,
-            transport: http(erc8004Config.rpcUrl),
-            account: privateKeyToAccount(erc8004Config.privateKey as Hex),
-          });
+          const publicClient = walletService.createPublicClient();
+          const walletClient = walletService.createWalletClient(config.privateKey);
+          const account = walletService.getAccount(config.privateKey);
 
           await callback?.({ text: `Registering agent on ERC-8004 IdentityRegistry with CID: ${agentCardCID}...` });
 
@@ -66,22 +55,23 @@ export function getERC8004Actions() {
             },
           ] as const;
 
-          const account = privateKeyToAccount(erc8004Config.privateKey as Hex);
           const hash = await walletClient.writeContract({
-            address: erc8004Config.identityRegistryAddress as Address,
+            chain: baseSepolia,
+            address: config.identityRegistryAddress as Address,
             abi,
             functionName: "registerAgent",
             args: [agentCardCID],
             account,
           });
-          
+
           await callback?.({ text: `Transaction submitted: ${hash}. Waiting for confirmation...` });
-          
+
           const receipt = await publicClient.waitForTransactionReceipt({ hash });
           await callback?.({ text: `Agent registered successfully! Transaction: ${receipt.transactionHash}` });
-        } catch (error: any) {
+        } catch (error: unknown) {
+          const msg = error instanceof Error ? error.message : String(error);
           elizaLogger.error("ERC-8004 registration error:", error);
-          await callback?.({ text: `Registration failed: ${error.message}` });
+          await callback?.({ text: `Registration failed: ${msg}` });
         }
       },
     },
@@ -98,7 +88,7 @@ export function getERC8004Actions() {
         _options: unknown,
         callback: ActionHandlerCallback
       ) => {
-        if (!erc8004Config) {
+        if (!config || !walletService) {
           await callback?.({ text: "ERC-8004 not configured." });
           return;
         }
@@ -108,11 +98,8 @@ export function getERC8004Actions() {
           ?.content?.text || 'csv-analysis').toLowerCase();
 
         try {
-          const publicClient = createPublicClient({
-            chain: baseSepolia,
-            transport: http(erc8004Config.rpcUrl),
-          });
-          
+          const publicClient = walletService.createPublicClient();
+
           await callback?.({ text: `Querying ERC-8004 registry for capabilities: ${capabilities}...` });
 
           const abi = [
@@ -130,14 +117,14 @@ export function getERC8004Actions() {
 
           const tags = capabilities.split(/[,\s]+/).filter(Boolean);
           const result = await publicClient.readContract({
-            address: erc8004Config.identityRegistryAddress as Address,
+            address: config.identityRegistryAddress as Address,
             abi,
             functionName: "discoverAgents",
             args: [tags],
           });
-          
+
           const [addresses, cids] = result;
-          
+
           if (addresses.length === 0) {
             await callback?.({ text: "No matching agents found." });
             return;
@@ -148,8 +135,8 @@ export function getERC8004Actions() {
             agentCardCID: cids[i] || ""
           }));
 
-          await callback?.({ 
-            text: `Found ${agents.length} matching agent(s). Fetching reputation scores...` 
+          await callback?.({
+            text: `Found ${agents.length} matching agent(s). Fetching reputation scores...`
           });
 
           const reputationAbi = [
@@ -164,12 +151,6 @@ export function getERC8004Actions() {
               ],
             },
           ] as const;
-
-          const config = erc8004Config;
-          if (!config) {
-            await callback?.({ text: "ERC-8004 not configured." });
-            return;
-          }
 
           const agentsWithReputation = await Promise.all(
             agents.map(async (agent) => {
@@ -192,20 +173,21 @@ export function getERC8004Actions() {
           );
 
           const bestAgent = agentsWithReputation.sort((a, b) => b.reputation - a.reputation)[0];
-          
+
           if (!bestAgent) {
             await callback?.({ text: "No agents found after reputation filtering." });
             return;
           }
 
-          await callback?.({ 
-            text: `Selected agent: ${bestAgent.address} (Reputation: ${bestAgent.reputation}/5, Ratings: ${bestAgent.totalRatings}). Agent card CID: ${bestAgent.agentCardCID}` 
+          await callback?.({
+            text: `Selected agent: ${bestAgent.address} (Reputation: ${bestAgent.reputation}/5, Ratings: ${bestAgent.totalRatings}). Agent card CID: ${bestAgent.agentCardCID}`
           });
 
           state.data = { ...(state.data || {}), selectedAgent: bestAgent };
-        } catch (error: any) {
+        } catch (error: unknown) {
+          const msg = error instanceof Error ? error.message : String(error);
           elizaLogger.error("ERC-8004 discovery error:", error);
-          await callback?.({ text: `Discovery failed: ${error.message}` });
+          await callback?.({ text: `Discovery failed: ${msg}` });
         }
       },
     },
@@ -222,7 +204,7 @@ export function getERC8004Actions() {
         _options: unknown,
         callback: ActionHandlerCallback
       ) => {
-        if (!erc8004Config) {
+        if (!config || !walletService) {
           await callback?.({ text: "ERC-8004 not configured." });
           return;
         }
@@ -238,16 +220,9 @@ export function getERC8004Actions() {
         }
 
         try {
-          const publicClient = createPublicClient({
-            chain: baseSepolia,
-            transport: http(erc8004Config.rpcUrl),
-          });
-
-          const walletClient = createWalletClient({
-            chain: baseSepolia,
-            transport: http(erc8004Config.rpcUrl),
-            account: privateKeyToAccount(erc8004Config.privateKey as Hex),
-          });
+          const publicClient = walletService.createPublicClient();
+          const walletClient = walletService.createWalletClient(config.privateKey);
+          const account = walletService.getAccount(config.privateKey);
 
           await callback?.({ text: `Posting reputation feedback for ${targetAgent}...` });
 
@@ -266,22 +241,23 @@ export function getERC8004Actions() {
             },
           ] as const;
 
-          const account = privateKeyToAccount(erc8004Config.privateKey as Hex);
           const hash = await walletClient.writeContract({
-            address: erc8004Config.reputationRegistryAddress as Address,
+            chain: baseSepolia,
+            address: config.reputationRegistryAddress as Address,
             abi,
             functionName: "postReputation",
             args: [targetAgent as Address, rating, comment, proofCID],
             account,
           });
-          
+
           await callback?.({ text: `Reputation feedback submitted: ${hash}` });
-          
+
           const receipt = await publicClient.waitForTransactionReceipt({ hash });
           await callback?.({ text: `Feedback posted successfully! Transaction: ${receipt.transactionHash}` });
-        } catch (error: any) {
+        } catch (error: unknown) {
+          const msg = error instanceof Error ? error.message : String(error);
           elizaLogger.error("ERC-8004 reputation post error:", error);
-          await callback?.({ text: `Reputation post failed: ${error.message}` });
+          await callback?.({ text: `Reputation post failed: ${msg}` });
         }
       },
     },
@@ -298,7 +274,7 @@ export function getERC8004Actions() {
         _options: unknown,
         callback: ActionHandlerCallback
       ) => {
-        if (!erc8004Config) {
+        if (!config || !walletService) {
           await callback?.({ text: "ERC-8004 not configured." });
           return;
         }
@@ -310,11 +286,8 @@ export function getERC8004Actions() {
         }
 
         try {
-          const publicClient = createPublicClient({
-            chain: baseSepolia,
-            transport: http(erc8004Config.rpcUrl),
-          });
-          
+          const publicClient = walletService.createPublicClient();
+
           const abi = [
             {
               name: "getReputationScore",
@@ -349,28 +322,29 @@ export function getERC8004Actions() {
             },
           ] as const;
 
-                const [score, totalRatings] = await publicClient.readContract({
-                  address: config.reputationRegistryAddress as Address,
+          const [score, totalRatings] = await publicClient.readContract({
+            address: config.reputationRegistryAddress as Address,
             abi,
             functionName: "getReputationScore",
             args: [agentAddress as Address],
           });
 
           const recentRatings = await publicClient.readContract({
-            address: erc8004Config.reputationRegistryAddress as Address,
+            address: config.reputationRegistryAddress as Address,
             abi,
             functionName: "getRecentRatings",
             args: [agentAddress as Address, 5n],
           });
 
           const reputation = Number(score) / 100;
-          
-          await callback?.({ 
-            text: `Reputation for ${agentAddress}: ${reputation}/5 (${totalRatings} ratings). Recent feedback: ${recentRatings.length} entries.` 
+
+          await callback?.({
+            text: `Reputation for ${agentAddress}: ${reputation}/5 (${totalRatings} ratings). Recent feedback: ${recentRatings.length} entries.`
           });
-        } catch (error: any) {
+        } catch (error: unknown) {
+          const msg = error instanceof Error ? error.message : String(error);
           elizaLogger.error("ERC-8004 reputation query error:", error);
-          await callback?.({ text: `Reputation query failed: ${error.message}` });
+          await callback?.({ text: `Reputation query failed: ${msg}` });
         }
       },
     },

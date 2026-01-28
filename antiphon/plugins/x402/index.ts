@@ -1,24 +1,18 @@
 import { elizaLogger } from "@elizaos/core";
 import type { ActionHandlerCallback, ActionHandlerState } from "../../index.js";
 import axios from "axios";
-import { createWalletClient, http } from "viem";
-import { privateKeyToAccount } from "viem/accounts";
-import { baseSepolia } from "viem/chains";
+import { WalletService } from "../../shared/blockchain/index.js";
 
-interface X402Config {
+export interface X402Config {
   facilitatorUrl: string;
   privateKey: string;
   rpcUrl: string;
   payToAddress?: string | undefined;
 }
 
-let x402Config: X402Config | null = null;
+export function getX402Actions(config: X402Config | null) {
+  const walletService = config ? new WalletService(config.rpcUrl) : null;
 
-export function initializeX402(config: X402Config) {
-  x402Config = config;
-}
-
-export function getX402Actions() {
   return {
     PAYMENT_REQUEST: {
       name: 'PAYMENT_REQUEST',
@@ -32,7 +26,7 @@ export function getX402Actions() {
         _options: unknown,
         callback: ActionHandlerCallback
       ) => {
-        if (!x402Config) {
+        if (!config || !walletService) {
           await callback?.({ text: "x402 not configured. Set X402_FACILITATOR_URL and PRIVATE_KEY." });
           return;
         }
@@ -59,20 +53,20 @@ export function getX402Actions() {
           });
 
           if (response.status === 402) {
-            await callback?.({ 
-              text: `Payment required: ${response.headers['x-402-price'] || '0.01 USDC'}. Processing payment...` 
+            await callback?.({
+              text: `Payment required: ${response.headers['x-402-price'] || '0.01 USDC'}. Processing payment...`
             });
 
             const paymentPayload = {
               amount: response.headers['x-402-price'] || "0.01",
               currency: response.headers['x-402-currency'] || "USDC",
               network: response.headers['x-402-network'] || "base-sepolia",
-              payTo: response.headers['x-402-pay-to'] || x402Config.payToAddress,
+              payTo: response.headers['x-402-pay-to'] || config.payToAddress,
             };
 
             await callback?.({ text: `Signing payment authorization for ${paymentPayload.amount} ${paymentPayload.currency}...` });
 
-            const signedPayment = await signX402Payment(paymentPayload, x402Config.privateKey, x402Config.facilitatorUrl);
+            const signedPayment = await signX402Payment(paymentPayload, config.privateKey, config.facilitatorUrl, config.rpcUrl);
 
             await callback?.({ text: `Payment signed. Retrying request with payment header...` });
 
@@ -84,8 +78,8 @@ export function getX402Actions() {
 
             if (paidResponse.status === 200) {
               const resultCID = paidResponse.data.resultCID;
-              await callback?.({ 
-                text: `Payment verified! Task completed. Result CID: ${resultCID}` 
+              await callback?.({
+                text: `Payment verified! Task completed. Result CID: ${resultCID}`
               });
               state.data = { ...state.data, resultCID };
             } else {
@@ -95,9 +89,10 @@ export function getX402Actions() {
             await callback?.({ text: `Task completed without payment. Result CID: ${response.data.resultCID}` });
             state.data = { ...state.data, resultCID: response.data.resultCID };
           }
-        } catch (error: any) {
+        } catch (error: unknown) {
+          const msg = error instanceof Error ? error.message : String(error);
           elizaLogger.error("x402 payment request error:", error);
-          await callback?.({ text: `Payment request failed: ${error.message}` });
+          await callback?.({ text: `Payment request failed: ${msg}` });
         }
       },
     },
@@ -114,7 +109,7 @@ export function getX402Actions() {
         _options: unknown,
         callback: ActionHandlerCallback
       ) => {
-        if (!x402Config) {
+        if (!config) {
           await callback?.({ text: "x402 not configured." });
           return;
         }
@@ -122,18 +117,19 @@ export function getX402Actions() {
         await callback?.({ text: "Verifying payment via Coinbase facilitator..." });
 
         try {
-          const verificationResult = await verifyX402Payment(x402Config.facilitatorUrl);
-          
+          const verificationResult = await verifyX402Payment(config.facilitatorUrl);
+
           if (verificationResult.verified) {
-            await callback?.({ 
-              text: `Payment verified: ${verificationResult.amount} ${verificationResult.currency} settled on ${verificationResult.network}.` 
+            await callback?.({
+              text: `Payment verified: ${verificationResult.amount} ${verificationResult.currency} settled on ${verificationResult.network}.`
             });
           } else {
             await callback?.({ text: "Payment verification failed." });
           }
-        } catch (error: any) {
+        } catch (error: unknown) {
+          const msg = error instanceof Error ? error.message : String(error);
           elizaLogger.error("x402 payment verify error:", error);
-          await callback?.({ text: `Payment verification error: ${error.message}` });
+          await callback?.({ text: `Payment verification error: ${msg}` });
         }
       },
     },
@@ -143,16 +139,14 @@ export function getX402Actions() {
 async function signX402Payment(
   payload: { amount: string; currency: string; network: string; payTo?: string },
   privateKey: string,
-  facilitatorUrl: string
+  facilitatorUrl: string,
+  rpcUrl: string
 ): Promise<string> {
-  const wallet = createWalletClient({
-    chain: baseSepolia,
-    transport: http(),
-    account: privateKeyToAccount(privateKey as `0x${string}`),
-  });
+  const walletService = new WalletService(rpcUrl);
+  const wallet = walletService.createWalletClient(privateKey);
 
-  const { createPaymentPayload, signPaymentPayload } = await import("@x402/core/");
-  
+  const { createPaymentPayload, signPaymentPayload } = await import("@x402/core");
+
   const paymentPayload = await createPaymentPayload({
     amount: payload.amount,
     currency: payload.currency,
@@ -181,7 +175,7 @@ async function verifyX402Payment(facilitatorUrl: string): Promise<{
       currency: response.data.currency,
       network: response.data.network,
     };
-  } catch (error) {
+  } catch {
     return { verified: false };
   }
 }

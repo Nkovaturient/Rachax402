@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "start": "tsx index.ts",
+    "test": "node --import tsx --test shared/blockchain/wallet.test.ts",
     "test:coordination": "node test-coordination.js"
   },
   "keywords": [
@@ -46,6 +47,7 @@
     "viem": "^2.45.0",
     "whatwg-url": "^7.1.0",
     "ws": "^8.19.0",
+    "yargs": "^18.0.0",
     "zod": "^4.3.6"
   },
   "pnpm": {

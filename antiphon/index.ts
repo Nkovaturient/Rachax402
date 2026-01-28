@@ -13,9 +13,9 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { getStorageClient } from "@storacha/elizaos-plugin";
 import { agentRequester } from "./elizaOS/Requester/character.js";
-import { agentProvider } from "./elizaOS/Provider/character.js";
-import { initializeERC8004, getERC8004Actions } from "./plugins/erc8004/index.js";
-import { initializeX402, getX402Actions } from "./plugins/x402/index.js";
+import { agentProvider } from "./elizaOS/Provider/data-analyser/character.js";
+import { getERC8004Actions, type ERC8004Config } from "./plugins/erc8004/index.js";
+import { getX402Actions, type X402Config } from "./plugins/x402/index.js";
 import express from "express";
 import Papa from "papaparse";
 
@@ -83,6 +83,45 @@ async function initializeClients(character: Character, runtime: AgentRuntime) {
   return [];
 }
 
+function getRequesterWalletConfig(): { erc8004: ERC8004Config | null; x402: X402Config | null } {
+  const rpcUrl = process.env.BASE_RPC_URL || "";
+  const privateKey = process.env.AGENT_A_PRIVATE_KEY || process.env.PRIVATE_KEY || "";
+  if (!rpcUrl || !privateKey) return { erc8004: null, x402: null };
+  return {
+    erc8004: {
+      identityRegistryAddress: process.env.ERC8004_IDENTITY_REGISTRY || "",
+      reputationRegistryAddress: process.env.ERC8004_REPUTATION_REGISTRY || "",
+      rpcUrl,
+      privateKey,
+    },
+    x402: process.env.X402_FACILITATOR_URL
+      ? { facilitatorUrl: process.env.X402_FACILITATOR_URL, privateKey, rpcUrl }
+      : null,
+  };
+}
+
+function getProviderWalletConfig(): { erc8004: ERC8004Config | null; x402: X402Config | null } {
+  const rpcUrl = process.env.BASE_RPC_URL || "";
+  const privateKey = process.env.AGENT_B_PRIVATE_KEY || process.env.PRIVATE_KEY || "";
+  if (!rpcUrl || !privateKey) return { erc8004: null, x402: null };
+  return {
+    erc8004: {
+      identityRegistryAddress: process.env.ERC8004_IDENTITY_REGISTRY || "",
+      reputationRegistryAddress: process.env.ERC8004_REPUTATION_REGISTRY || "",
+      rpcUrl,
+      privateKey,
+    },
+    x402: process.env.X402_FACILITATOR_URL
+      ? {
+          facilitatorUrl: process.env.X402_FACILITATOR_URL,
+          privateKey,
+          rpcUrl,
+          payToAddress: process.env.PAY_TO_ADDRESS || undefined,
+        }
+      : null,
+  };
+}
+
 export function createAgent(
   character: Character,
   db: any,
@@ -95,13 +134,14 @@ export function createAgent(
     character.name
   );
 
+  const plugins = [bootstrapPlugin, ...(character.plugins ?? [])].filter(Boolean);
   return new AgentRuntime({
     databaseAdapter: db,
     token,
     modelProvider: character.modelProvider,
     evaluators: [],
     character,
-    plugins: [bootstrapPlugin].filter(Boolean),
+    plugins,
     providers: [],
     actions: [],
     services: [],
@@ -110,7 +150,7 @@ export function createAgent(
   });
 }
 
-async function startRequesterAgent(character: Character, directClient: DirectClient, storageClient: any) {
+async function startRequesterAgent(character: Character, directClient: DirectClient) {
   try {
     character.id ??= stringToUuid(character.name);
     character.username ??= character.name;
@@ -127,27 +167,13 @@ async function startRequesterAgent(character: Character, directClient: DirectCli
     const cache = initializeDbCache(character, db);
     const runtime = createAgent(character, db, cache, token);
 
-    if (process.env.BASE_RPC_URL && process.env.PRIVATE_KEY) {
-      initializeERC8004({
-        identityRegistryAddress: process.env.ERC8004_IDENTITY_REGISTRY || "",
-        reputationRegistryAddress: process.env.ERC8004_REPUTATION_REGISTRY || "",
-        rpcUrl: process.env.BASE_RPC_URL,
-        privateKey: process.env.PRIVATE_KEY,
-      });
-    }
-
-    if (process.env.X402_FACILITATOR_URL && process.env.PRIVATE_KEY) {
-      initializeX402({
-        facilitatorUrl: process.env.X402_FACILITATOR_URL,
-        privateKey: process.env.PRIVATE_KEY,
-        rpcUrl: process.env.BASE_RPC_URL || "",
-      });
-    }
-
+    const requesterWallet = getRequesterWalletConfig();
     await runtime.initialize();
 
-    const erc8004Actions = getERC8004Actions();
-    const x402Actions = getX402Actions();
+    const storageClient = await getStorageClient(runtime);
+
+    const erc8004Actions = getERC8004Actions(requesterWallet.erc8004);
+    const x402Actions = getX402Actions(requesterWallet.x402);
 
     runtime.evaluate = async () => ['AGENT_DISCOVER', 'ANTIPHON_AT_PLAY', 'PAYMENT_REQUEST', 'RESULT_RETRIEVE', 'REPUTATION_POST'];
 
@@ -163,31 +189,31 @@ async function startRequesterAgent(character: Character, directClient: DirectCli
         ?.find((m) => m.content?.text?.includes('csv') || m.content?.text?.includes('analyze'))
         ?.content?.text || 'csv-analysis').toLowerCase();
 
-      if (process.env.BASE_RPC_URL && process.env.PRIVATE_KEY) {
+      if (requesterWallet.erc8004) {
         const erc8004Handler = erc8004Actions.AGENT_DISCOVER.handler;
         await erc8004Handler?.(_runtime, _message, state, _options, callback);
-        
+
         const selectedAgent = state.data?.selectedAgent as { endpoint?: string; agentCardCID?: string } | undefined;
         if (selectedAgent?.agentCardCID) {
           try {
-            const agentCardData = await storageClient.getStorage().retrieve(selectedAgent.agentCardCID);
+            const agentCardData = await storageClient.getContent(selectedAgent.agentCardCID);
             const agentCardText = await agentCardData.text();
             const agentCard = JSON.parse(agentCardText);
-            state.data = { 
-              ...(state.data || {}), 
-              selectedAgent: { ...selectedAgent, endpoint: agentCard.endpoint } 
+            state.data = {
+              ...(state.data || {}),
+              selectedAgent: { ...selectedAgent, endpoint: agentCard.endpoint }
             };
             await callback?.({ text: `Retrieved agent card. Endpoint: ${agentCard.endpoint}` });
-          } catch (error: any) {
+          } catch (error: unknown) {
             elizaLogger.error("Agent card retrieval error:", error);
           }
         }
       } else {
-        await callback?.({ 
-          text: `Querying ERC-8004 registry for capabilities: ${capabilities}... (ERC-8004 not configured, using mock)` 
+        await callback?.({
+          text: `Querying ERC-8004 registry for capabilities: ${capabilities}... (ERC-8004 not configured, using mock)`
         });
-        await callback?.({ 
-          text: `Found matching agents. Selecting best match based on reputation and pricing.` 
+        await callback?.({
+          text: `Found matching agents. Selecting best match based on reputation and pricing.`
         });
       }
     };
@@ -219,7 +245,8 @@ async function startRequesterAgent(character: Character, directClient: DirectCli
           const jsonString = JSON.stringify({ task: taskData }, null, 2);
           const blobContent = new Blob([jsonString], { type: "application/json" });
           const file = new File([blobContent], `task-input.json`, { type: "application/json" });
-          const inputCID = await storageClient.getStorage().uploadDirectory([file]);
+          const cidLink = await storageClient.getStorage().uploadFile(file);
+          const inputCID = typeof cidLink === 'string' ? cidLink : (cidLink?.toString?.() ?? '');
           
           state.data = { ...(state.data || {}), inputCID };
           
@@ -263,7 +290,7 @@ async function startRequesterAgent(character: Character, directClient: DirectCli
         return;
       }
 
-      if (process.env.X402_FACILITATOR_URL && process.env.PRIVATE_KEY) {
+      if (requesterWallet.x402) {
         const x402Handler = x402Actions.PAYMENT_REQUEST.handler;
         await x402Handler?.(_runtime, _message, state, _options, callback);
       } else {
@@ -286,7 +313,7 @@ async function startRequesterAgent(character: Character, directClient: DirectCli
         state.data = { ...(state.data || {}), resultCID, rating: 5, comment: "Excellent service" };
       }
 
-      if (process.env.BASE_RPC_URL && process.env.PRIVATE_KEY) {
+      if (requesterWallet.erc8004) {
         const erc8004Handler = erc8004Actions.REPUTATION_POST.handler;
         await erc8004Handler?.(_runtime, _message, state, _options, callback);
       } else {
@@ -314,16 +341,17 @@ async function startRequesterAgent(character: Character, directClient: DirectCli
         try {
           await callback?.({ text: `Retrieving results from Storacha (CID: ${resultCID})...` });
           
-          const resultData = await storageClient.getStorage().retrieve(resultCID);
+          const resultData = await storageClient.getContent(resultCID);
           const resultText = await resultData.text();
           const results = JSON.parse(resultText);
           
           await callback?.({ 
             text: `Results retrieved:\n${JSON.stringify(results, null, 2)}` 
           });
-        } catch (error: any) {
+        } catch (error: unknown) {
+          const msg = error instanceof Error ? error.message : String(error);
           elizaLogger.error("Result retrieval error:", error);
-          await callback?.({ text: `Error retrieving results: ${error.message}` });
+          await callback?.({ text: `Error retrieving results: ${msg}` });
         }
       },
       examples: [
@@ -347,7 +375,7 @@ async function startRequesterAgent(character: Character, directClient: DirectCli
   }
 }
 
-async function startProviderAgent(character: Character, directClient: DirectClient, storageClient: any) {
+async function startProviderAgent(character: Character, directClient: DirectClient) {
   try {
     character.id ??= stringToUuid(character.name);
     character.username ??= character.name;
@@ -364,28 +392,13 @@ async function startProviderAgent(character: Character, directClient: DirectClie
     const cache = initializeDbCache(character, db);
     const runtime = createAgent(character, db, cache, token);
 
-    if (process.env.BASE_RPC_URL && process.env.PRIVATE_KEY) {
-      initializeERC8004({
-        identityRegistryAddress: process.env.ERC8004_IDENTITY_REGISTRY || "",
-        reputationRegistryAddress: process.env.ERC8004_REPUTATION_REGISTRY || "",
-        rpcUrl: process.env.BASE_RPC_URL,
-        privateKey: process.env.PRIVATE_KEY,
-      });
-    }
-
-    if (process.env.X402_FACILITATOR_URL) {
-      initializeX402({
-        facilitatorUrl: process.env.X402_FACILITATOR_URL,
-        privateKey: process.env.PRIVATE_KEY || "",
-        rpcUrl: process.env.BASE_RPC_URL || "",
-        payToAddress: process.env.PAY_TO_ADDRESS || undefined,
-      });
-    }
-
+    const providerWallet = getProviderWalletConfig();
     await runtime.initialize();
 
-    const erc8004Actions = getERC8004Actions();
-    const x402Actions = getX402Actions();
+    const storageClient = await getStorageClient(runtime);
+
+    const erc8004Actions = getERC8004Actions(providerWallet.erc8004);
+    const x402Actions = getX402Actions(providerWallet.x402);
 
     runtime.evaluate = async () => ['AGENT_REGISTER', 'ANALYZE_DATA', 'PAYMENT_VERIFY'];
 
@@ -408,29 +421,31 @@ async function startProviderAgent(character: Character, directClient: DirectClie
           pricing: character.settings?.pricing || {},
           endpoint: character.settings?.endpoint || `http://localhost:${parseInt(getEnv("SERVER_PORT") || "3000")}/analyze`,
         };
-        
+
         const jsonString = JSON.stringify(agentCard, null, 2);
         const blobContent = new Blob([jsonString], { type: "application/json" });
         const file = new File([blobContent], `agent-card.json`, { type: "application/json" });
-        const agentCardCID = await storageClient.getStorage().uploadDirectory([file]);
-        
-          state.data = { ...(state.data || {}), agentCardCID };
-        
-        await callback?.({ 
-          text: `Agent card uploaded (CID: ${agentCardCID}). Registering on ERC-8004 IdentityRegistry...` 
+        const agentCardCID = await storageClient.getStorage().uploadFile(file);
+        const agentCardCIDString = typeof agentCardCID === 'string' ? agentCardCID : (agentCardCID.link ?? '');
+
+        state.data = { ...(state.data || {}), agentCardCIDString };
+
+        await callback?.({
+          text: `Agent card uploaded (CID: ${agentCardCID}). Registering on ERC-8004 IdentityRegistry...`
         });
-        
-        if (process.env.BASE_RPC_URL && process.env.PRIVATE_KEY) {
+
+        if (providerWallet.erc8004) {
           const erc8004Handler = erc8004Actions.AGENT_REGISTER.handler;
           await erc8004Handler?.(_runtime, _message, state, _options, callback);
         } else {
-          await callback?.({ 
-            text: `Registration skipped (ERC-8004 not configured). Agent card CID: ${agentCardCID}` 
+          await callback?.({
+            text: `Registration skipped (ERC-8004 not configured). Agent card CID: ${agentCardCID}`
           });
         }
-      } catch (error: any) {
+      } catch (error: unknown) {
+        const msg = error instanceof Error ? error.message : String(error);
         elizaLogger.error("Agent registration error:", error);
-        await callback?.({ text: `Error registering agent: ${error.message}` });
+        await callback?.({ text: `Error registering agent: ${msg}` });
       }
     };
     runtime.registerAction(registerAction);
@@ -458,7 +473,7 @@ async function startProviderAgent(character: Character, directClient: DirectClie
         });
 
         try {
-          const inputData = await storageClient.getStorage().retrieve(inputCID);
+          const inputData = await storageClient.getContent(inputCID);
           const dataText = await inputData.text();
           const data = JSON.parse(dataText);
 
@@ -499,13 +514,14 @@ async function startProviderAgent(character: Character, directClient: DirectClie
           const jsonString = JSON.stringify(results, null, 2);
           const blobContent = new Blob([jsonString], { type: "application/json" });
           const file = new File([blobContent], `analysis-results.json`, { type: "application/json" });
-          const resultCID = await storageClient.getStorage().uploadDirectory([file]);
+          const resultCID = await storageClient.getStorage().uploadFile(file);
+          const resultCIDString = typeof resultCID === 'string' ? resultCID : (resultCID.link ?? '');
           
           await callback?.({ 
-            text: `Analysis complete! Results uploaded (CID: ${resultCID}). Summary: ${results.rowsProcessed} rows, mean=${results.mean}, std dev=${results.stdDev}` 
+            text: `Analysis complete! Results uploaded (CID: ${resultCIDString}). Summary: ${results.rowsProcessed} rows, mean=${results.mean}, std dev=${results.stdDev}` 
           });
 
-          state.data = { ...(state.data || {}), resultCID };
+          state.data = { ...(state.data || {}), resultCIDString };
         } catch (error: any) {
           elizaLogger.error("Data analysis error:", error);
           await callback?.({ text: `Error processing data: ${error.message}` });
@@ -631,7 +647,7 @@ async function startProviderExpressServer(character: Character, storageClient: a
         const jsonString = JSON.stringify(results, null, 2);
         const blobContent = new Blob([jsonString], { type: "application/json" });
         const file = new File([blobContent], `analysis-results.json`, { type: "application/json" });
-        const resultCID = await storageClient.getStorage().uploadDirectory([file]);
+        const resultCID = await storageClient.getStorage().uploadFile(file);
 
         res.json({ resultCID, status: "completed", results });
       } catch (error: any) {
@@ -673,14 +689,12 @@ const startAgents = async () => {
   const agentMode = args.mode || process.env.AGENT_MODE || "both";
   
   try {
-    const storageClient = await getStorageClient({} as any);
-
     if (agentMode === "requester" || agentMode === "both") {
-      await startRequesterAgent(agentRequester, directClient, storageClient);
+      await startRequesterAgent(agentRequester, directClient);
     }
 
     if (agentMode === "provider" || agentMode === "both") {
-      await startProviderAgent(agentProvider, directClient, storageClient);
+      await startProviderAgent(agentProvider, directClient);
     }
   } catch (error) {
     elizaLogger.error("Error starting agents:", error);
@@ -692,11 +706,10 @@ const startAgents = async () => {
   }
 
   directClient.startAgent = async (character: Character) => {
-    const storageClient = await getStorageClient({} as any);
     if (character.name === "DataRequester") {
-      return startRequesterAgent(character, directClient, storageClient);
+      return startRequesterAgent(character, directClient);
     } else {
-      return startProviderAgent(character, directClient, storageClient);
+      return startProviderAgent(character, directClient);
     }
   };
 
