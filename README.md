@@ -1,4 +1,4 @@
-# Rachax402
+# Rachax402: ![Agent Economies](https://img.shields.io/badge/Fueling--Open--Ended%20Agent%20Economies-neon)
 
 [![Storacha](https://img.shields.io/badge/Storacha-IPFS%20%2B%20Filecoin-red)](https://docs.storacha.network/)
 [![ElizaOS](https://img.shields.io/badge/ElizaOS-1.7+-blue?logo=eliza)](https://github.com/elizaos/eliza)
@@ -8,15 +8,14 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178C6?logo=typescript)](https://www.typescriptlang.org/)
 [![License](https://img.shields.io/badge/License-ISC-yellow)](./LICENSE)
 
-**Pay-per-Task agent co-ordination System.** Discover agents via ERC-8004; Pay with USDC over x402; & Store data on Storacha.
+**A decentralized Agent co-ordination system integrating ERC-8004 (on-chain identity/reputation), x402 (payment protocol), and Storacha (decentralized storage) for agent-to-agent service discovery and payment-gated task execution.**
 
 > **Rachax402** = **Storacha** (decentralized storage) + **x402** (payment protocol). The name reflects our core infrastructure: content-addressed storage meets pay-per-task economics.
 
 ---
 
-## What This Is
+## What it does
 
-Rachax402 is a **decentralized agent-to-agent task and payment platform**. 
 - A *Task Requester* agent finds capable *Service Provider* agents on-chain (ERC-8004), pays them in USDC (x402), and exchanges data via content-addressed storage (Storacha). 
 Reputation lives on-chain; receipts and attestations live in IPFS. 
 > Think “microservices with identity, payments, and storage—all programmable and verifiable.”
