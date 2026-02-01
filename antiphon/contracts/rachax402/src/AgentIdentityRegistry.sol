@@ -128,42 +128,45 @@ contract AgentIdentityRegistry {
     }
 
     /**
-     * @dev discoverAgents discover agents by capability tags (returns agents matching ANY of the provided tags)
+     * @dev discoverAgents discover agents matching any of the provided capability tags with pagination
      * @param capabilityTags An array of capability tags to search for agents
-     * @notice this take O(n^3) complexity in worst case due to uniqueness check..... Not efficient!!!!
-
-     * @return agents An array of unique agent addresses matching the capability tags
-     * @return cids An array of corresponding agent card CIDs
+     * @param offset The starting index for pagination
+     * @param limit Maximum number of results to return (0 for all remaining)
+     * @return agents An array of unique agent addresses matching any capability tag
+     * @return cids Empty array - use getAgentCard() to fetch CIDs separately for gas efficiency
+     * @return total The total count of unique matching agents (for pagination)
+     * @notice CIDs are not returned for gas efficiency. Use getAgentCard(address) to fetch individual CIDs.
      */
     function discoverAgents(
-        string[] calldata capabilityTags
-    ) external view returns (address[] memory agents, string[] memory cids) {
+        string[] calldata capabilityTags,
+        uint256 offset,
+        uint256 limit
+    ) external view returns (address[] memory agents, string[] memory cids, uint256 total) {
         if (capabilityTags.length == 0) {
             revert EmptyCapabilityTags();
         }
 
-        // First pass: count unique agents
+        // First pass: collect unique agents
         uint256 maxAgents = 0;
         for (uint256 i = 0; i < capabilityTags.length; i++) {
             maxAgents += s_capabilityToAgents[capabilityTags[i]].length;
         }
 
         if (maxAgents == 0) {
-            return (new address[](0), new string[](0));
+            return (new address[](0), new string[](0), 0);
         }
 
-        // Temporary arrays for collecting unique agents
+        // Temporary array for collecting unique agents
         address[] memory tempAgents = new address[](maxAgents);
         uint256 uniqueCount = 0;
 
-        // Track which agents we've already added (using a simple loop for uniqueness)
         for (uint256 i = 0; i < capabilityTags.length; i++) {
             address[] storage agentsWithCapability = s_capabilityToAgents[capabilityTags[i]];
 
             for (uint256 j = 0; j < agentsWithCapability.length; j++) {
                 address agent = agentsWithCapability[j];
 
-                // Check if agent is already in our result
+                // Check if agent is already added
                 bool alreadyAdded = false;
                 for (uint256 k = 0; k < uniqueCount; k++) {
                     if (tempAgents[k] == agent) {
@@ -179,16 +182,26 @@ contract AgentIdentityRegistry {
             }
         }
 
-        // Create correctly sized result arrays
-        agents = new address[](uniqueCount);
-        cids = new string[](uniqueCount);
+        total = uniqueCount;
 
-        for (uint256 i = 0; i < uniqueCount; i++) {
-            agents[i] = tempAgents[i];
-            cids[i] = s_agents[tempAgents[i]].agentCardCID;
+        // Handle offset beyond array bounds
+        if (offset >= total) {
+            return (new address[](0), new string[](0), total);
         }
 
-        return (agents, cids);
+        // Apply pagination
+        uint256 remaining = total - offset;
+        uint256 count = (limit == 0 || limit > remaining) ? remaining : limit;
+
+        agents = new address[](count);
+        // Return empty cids array - client should use getAgentCard() for CIDs
+        cids = new string[](0);
+
+        for (uint256 i = 0; i < count; i++) {
+            agents[i] = tempAgents[offset + i];
+        }
+
+        return (agents, cids, total);
     }
 
     // External Getter Functions
