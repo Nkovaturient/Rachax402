@@ -225,10 +225,9 @@ contract AgentIdentityRegistryTest is Test {
         string[] memory searchTags = new string[](1);
         searchTags[0] = "statistics";
 
-        (address[] memory agents, string[] memory cids, uint256 total) = registry.discoverAgents(searchTags, 0, 10);
+        (address[] memory agents, uint256 total) = registry.discoverAgents(searchTags, 0, 10);
 
         assertEq(agents.length, 2);
-        assertEq(cids.length, 0); // CIDs not returned for gas efficiency
         assertEq(total, 2);
         assertEq(agents[0], agentA);
         assertEq(agents[1], agentB);
@@ -248,14 +247,13 @@ contract AgentIdentityRegistryTest is Test {
         searchTags[0] = "csv-analysis";
         searchTags[1] = "json-processing";
 
-        (address[] memory agents, string[] memory cids, uint256 total) = registry.discoverAgents(searchTags, 0, 10);
+        (address[] memory agents, uint256 total) = registry.discoverAgents(searchTags, 0, 10);
 
         assertEq(agents.length, 2);
-        assertEq(cids.length, 0); // CIDs not returned for gas efficiency
         assertEq(total, 2);
     }
 
-    function test_DiscoverAgents_ReturnsEmptyCIDsForGasEfficiency() public {
+    function test_DiscoverAgents_FetchCIDsSeparately() public {
         vm.prank(agentA);
         registry.registerAgent(CID_A, capabilitiesA);
 
@@ -266,10 +264,9 @@ contract AgentIdentityRegistryTest is Test {
         searchTags[0] = "csv-analysis";
         searchTags[1] = "json-processing";
 
-        (address[] memory agents, string[] memory cids, uint256 total) = registry.discoverAgents(searchTags, 0, 10);
+        (address[] memory agents, uint256 total) = registry.discoverAgents(searchTags, 0, 10);
 
         assertEq(agents.length, 2);
-        assertEq(cids.length, 0); // CIDs not returned for gas efficiency - use getAgentCard() instead
         assertEq(total, 2);
         assertEq(agents[0], agentA);
         assertEq(agents[1], agentC);
@@ -290,11 +287,10 @@ contract AgentIdentityRegistryTest is Test {
         searchTags[0] = "csv-analysis";
         searchTags[1] = "statistics";
 
-        (address[] memory agents, string[] memory cids, uint256 total) = registry.discoverAgents(searchTags, 0, 10);
+        (address[] memory agents, uint256 total) = registry.discoverAgents(searchTags, 0, 10);
 
         // Should only return agentA once (no duplicates)
         assertEq(agents.length, 1);
-        assertEq(cids.length, 0); // CIDs not returned for gas efficiency
         assertEq(total, 1);
         assertEq(agents[0], agentA);
     }
@@ -315,15 +311,13 @@ contract AgentIdentityRegistryTest is Test {
         searchTags[2] = "json-processing";
 
         // Get first page
-        (address[] memory page1, string[] memory cids1, uint256 total1) = registry.discoverAgents(searchTags, 0, 2);
+        (address[] memory page1, uint256 total1) = registry.discoverAgents(searchTags, 0, 2);
         assertEq(page1.length, 2);
-        assertEq(cids1.length, 0); // CIDs not returned for gas efficiency
         assertEq(total1, 3);
 
         // Get second page
-        (address[] memory page2, string[] memory cids2, uint256 total2) = registry.discoverAgents(searchTags, 2, 2);
+        (address[] memory page2, uint256 total2) = registry.discoverAgents(searchTags, 2, 2);
         assertEq(page2.length, 1);
-        assertEq(cids2.length, 0); // CIDs not returned for gas efficiency
         assertEq(total2, 3);
     }
 
@@ -334,10 +328,9 @@ contract AgentIdentityRegistryTest is Test {
         string[] memory searchTags = new string[](1);
         searchTags[0] = "statistics";
 
-        (address[] memory agents, string[] memory cids, uint256 total) = registry.discoverAgents(searchTags, 100, 10);
+        (address[] memory agents, uint256 total) = registry.discoverAgents(searchTags, 100, 10);
 
         assertEq(agents.length, 0);
-        assertEq(cids.length, 0);
         assertEq(total, 1);
     }
 
@@ -351,10 +344,9 @@ contract AgentIdentityRegistryTest is Test {
         string[] memory searchTags = new string[](1);
         searchTags[0] = "statistics";
 
-        (address[] memory agents, string[] memory cids, uint256 total) = registry.discoverAgents(searchTags, 0, 0);
+        (address[] memory agents, uint256 total) = registry.discoverAgents(searchTags, 0, 0);
 
         assertEq(agents.length, 2);
-        assertEq(cids.length, 0); // CIDs not returned for gas efficiency
         assertEq(total, 2);
     }
 
@@ -365,10 +357,9 @@ contract AgentIdentityRegistryTest is Test {
         string[] memory searchTags = new string[](1);
         searchTags[0] = "non-existent";
 
-        (address[] memory agents, string[] memory cids, uint256 total) = registry.discoverAgents(searchTags, 0, 10);
+        (address[] memory agents, uint256 total) = registry.discoverAgents(searchTags, 0, 10);
 
         assertEq(agents.length, 0);
-        assertEq(cids.length, 0);
         assertEq(total, 0);
     }
 

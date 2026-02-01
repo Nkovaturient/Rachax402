@@ -133,15 +133,14 @@ contract AgentIdentityRegistry {
      * @param offset The starting index for pagination
      * @param limit Maximum number of results to return (0 for all remaining)
      * @return agents An array of unique agent addresses matching any capability tag
-     * @return cids Empty array - use getAgentCard() to fetch CIDs separately for gas efficiency
      * @return total The total count of unique matching agents (for pagination)
-     * @notice CIDs are not returned for gas efficiency. Use getAgentCard(address) to fetch individual CIDs.
+     * @notice Use getAgentCard(address) to fetch individual CIDs for discovered agents.
      */
     function discoverAgents(
         string[] calldata capabilityTags,
         uint256 offset,
         uint256 limit
-    ) external view returns (address[] memory agents, string[] memory cids, uint256 total) {
+    ) external view returns (address[] memory agents, uint256 total) {
         if (capabilityTags.length == 0) {
             revert EmptyCapabilityTags();
         }
@@ -153,7 +152,7 @@ contract AgentIdentityRegistry {
         }
 
         if (maxAgents == 0) {
-            return (new address[](0), new string[](0), 0);
+            return (new address[](0), 0);
         }
 
         // Temporary array for collecting unique agents
@@ -186,7 +185,7 @@ contract AgentIdentityRegistry {
 
         // Handle offset beyond array bounds
         if (offset >= total) {
-            return (new address[](0), new string[](0), total);
+            return (new address[](0), total);
         }
 
         // Apply pagination
@@ -194,14 +193,12 @@ contract AgentIdentityRegistry {
         uint256 count = (limit == 0 || limit > remaining) ? remaining : limit;
 
         agents = new address[](count);
-        // Return empty cids array - client should use getAgentCard() for CIDs
-        cids = new string[](0);
 
         for (uint256 i = 0; i < count; i++) {
             agents[i] = tempAgents[offset + i];
         }
 
-        return (agents, cids, total);
+        return (agents, total);
     }
 
     // External Getter Functions
