@@ -3,7 +3,7 @@ pragma solidity ^0.8.13;
 
 import {Test, console} from "forge-std/Test.sol";
 import {Vm} from "lib/forge-std/src/Vm.sol";
-import {AgentIdentityRegistry} from "../src/AgentIdentityRegistry.sol";
+import {AgentIdentityRegistry} from "../../src/AgentIdentityRegistry.sol";
 
 contract AgentIdentityRegistryTest is Test {
     AgentIdentityRegistry public registry;
