@@ -1,23 +1,27 @@
+/**
+ * ElizaOS Agent A (Requester)
+ * Properly integrates with Agent B Express server
+ */
+
 import { elizaLogger } from "@elizaos/core";
 import type { ActionHandlerCallback, ActionHandlerState } from "../../index.js";
 import axios from "axios";
-import { WalletService } from "../../shared/blockchain/index.js";
+import { createWalletClient, http } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
+import { baseSepolia } from "viem/chains";
 
 export interface X402Config {
   facilitatorUrl: string;
   privateKey: string;
   rpcUrl: string;
-  payToAddress?: string | undefined;
 }
 
 export function getX402Actions(config: X402Config | null) {
-  const walletService = config ? new WalletService(config.rpcUrl) : null;
-
   return {
     PAYMENT_REQUEST: {
       name: 'PAYMENT_REQUEST',
-      description: 'Handle x402 payment challenges: parse 402 responses, sign payment authorizations, submit signed payloads',
-      similes: ['pay', 'payment', 'authorize'],
+      description: 'Send task request to Agent B, handle 402, sign payment, retry with proof',
+      similes: ['pay', 'payment', 'request service'],
       validate: async () => true,
       handler: async (
         _runtime: unknown,
@@ -26,8 +30,8 @@ export function getX402Actions(config: X402Config | null) {
         _options: unknown,
         callback: ActionHandlerCallback
       ) => {
-        if (!config || !walletService) {
-          await callback?.({ text: "x402 not configured. Set X402_FACILITATOR_URL and PRIVATE_KEY." });
+        if (!config) {
+          await callback?.({ text: "x402 not configured." });
           return;
         }
 
@@ -35,60 +39,105 @@ export function getX402Actions(config: X402Config | null) {
         const inputCID = state.data?.inputCID as string;
 
         if (!providerEndpoint || !inputCID) {
-          await callback?.({ text: "Missing provider endpoint or input CID." });
+          await callback?.({ text: "Missing provider endpoint or input CID. Use AGENT_DISCOVER first." });
           return;
         }
 
         try {
           await callback?.({ text: `Sending task request to ${providerEndpoint}...` });
 
+          // Step 1: Initial request (will get 402)
           const taskRequest = {
-            action: "analyze",
             inputCID,
             requirements: "statistical summary and trend analysis"
           };
 
           const response = await axios.post(providerEndpoint, taskRequest, {
-            validateStatus: (status) => status === 200 || status === 402
+            validateStatus: (status) => status === 200 || status === 402,
+            timeout: 15000
           });
 
           if (response.status === 402) {
+            // Step 2: Parse payment requirements
+            const paymentHeader = response.headers['payment-required'];
+            if (!paymentHeader) {
+              throw new Error("402 response missing PAYMENT-REQUIRED header");
+            }
+
+            const paymentReq = JSON.parse(
+              Buffer.from(paymentHeader, 'base64').toString()
+            );
+
+            const accept = paymentReq.accepts[0];
             await callback?.({
-              text: `Payment required: ${response.headers['x-402-price'] || '0.01 USDC'}. Processing payment...`
+              text: `Payment required: ${accept.price} on ${accept.network}. Signing payment...`
             });
 
+            // Step 3: Sign payment with x402
+            const account = privateKeyToAccount(config.privateKey as `0x${string}`);
+            const walletClient = createWalletClient({
+              chain: baseSepolia,
+              transport: http(config.rpcUrl),
+              account
+            });
+
+            // Create payment payload
             const paymentPayload = {
-              amount: response.headers['x-402-price'] || "0.01",
-              currency: response.headers['x-402-currency'] || "USDC",
-              network: response.headers['x-402-network'] || "base-sepolia",
-              payTo: response.headers['x-402-pay-to'] || config.payToAddress,
+              price: accept.price,
+              network: accept.network,
+              payTo: accept.payTo,
+              facilitator: config.facilitatorUrl,
+              timestamp: Date.now()
             };
 
-            await callback?.({ text: `Signing payment authorization for ${paymentPayload.amount} ${paymentPayload.currency}...` });
+            // Sign the payment
+            const payloadStr = JSON.stringify(paymentPayload);
+            const signature = await walletClient.signMessage({
+              message: payloadStr
+            });
 
-            const signedPayment = await signX402Payment(paymentPayload, config.privateKey, config.facilitatorUrl, config.rpcUrl);
+            const signedPayment = Buffer.from(
+              JSON.stringify({
+                payload: paymentPayload,
+                signature
+              })
+            ).toString('base64');
 
-            await callback?.({ text: `Payment signed. Retrying request with payment header...` });
+            await callback?.({ text: "Payment signed. Retrying request..." });
 
+            // Step 4: Retry with payment proof
             const paidResponse = await axios.post(providerEndpoint, taskRequest, {
               headers: {
-                'x-402-payment': signedPayment
-              }
+                'X-PAYMENT': signedPayment,
+                'PAYMENT-SIGNATURE': signedPayment // Alternative header name
+              },
+              timeout: 30000
             });
 
             if (paidResponse.status === 200) {
               const resultCID = paidResponse.data.resultCID;
               await callback?.({
-                text: `Payment verified! Task completed. Result CID: ${resultCID}`
+                text: `✅ Payment verified! Analysis complete. Result CID: ${resultCID}`
               });
-              state.data = { ...state.data, resultCID };
+              
+              state.data = { 
+                ...state.data, 
+                resultCID,
+                rating: 5,
+                comment: "Excellent analysis service"
+              };
             } else {
-              await callback?.({ text: `Payment verification failed. Status: ${paidResponse.status}` });
+              throw new Error(`Unexpected response status: ${paidResponse.status}`);
             }
-          } else {
-            await callback?.({ text: `Task completed without payment. Result CID: ${response.data.resultCID}` });
+
+          } else if (response.status === 200) {
+            // No payment required (testing mode?)
+            await callback?.({
+              text: `Task completed without payment. Result CID: ${response.data.resultCID}`
+            });
             state.data = { ...state.data, resultCID: response.data.resultCID };
           }
+
         } catch (error: unknown) {
           const msg = error instanceof Error ? error.message : String(error);
           elizaLogger.error("x402 payment request error:", error);
@@ -99,13 +148,13 @@ export function getX402Actions(config: X402Config | null) {
 
     PAYMENT_VERIFY: {
       name: 'PAYMENT_VERIFY',
-      description: 'Verify x402 payment via Coinbase facilitator, confirm USDC settlement before processing',
-      similes: ['verify', 'check payment'],
+      description: 'Verify payment settlement via facilitator',
+      similes: ['verify payment', 'check settlement'],
       validate: async () => true,
       handler: async (
         _runtime: unknown,
         _message: unknown,
-        _state: unknown,
+        state: ActionHandlerState,
         _options: unknown,
         callback: ActionHandlerCallback
       ) => {
@@ -114,17 +163,26 @@ export function getX402Actions(config: X402Config | null) {
           return;
         }
 
-        await callback?.({ text: "Verifying payment via Coinbase facilitator..." });
-
         try {
-          const verificationResult = await verifyX402Payment(config.facilitatorUrl);
+          await callback?.({ text: "Verifying payment settlement..." });
 
-          if (verificationResult.verified) {
+          const txHash = state.data?.paymentTxHash as string;
+          if (!txHash) {
+            await callback?.({ text: "No payment transaction hash found." });
+            return;
+          }
+
+          const response = await axios.get(
+            `${config.facilitatorUrl}/verify/${txHash}`,
+            { timeout: 10000 }
+          );
+
+          if (response.data.verified) {
             await callback?.({
-              text: `Payment verified: ${verificationResult.amount} ${verificationResult.currency} settled on ${verificationResult.network}.`
+              text: `✅ Payment verified: ${response.data.amount} ${response.data.currency} on ${response.data.network}`
             });
           } else {
-            await callback?.({ text: "Payment verification failed." });
+            await callback?.({ text: "❌ Payment verification failed." });
           }
         } catch (error: unknown) {
           const msg = error instanceof Error ? error.message : String(error);
@@ -134,48 +192,4 @@ export function getX402Actions(config: X402Config | null) {
       },
     },
   };
-}
-
-async function signX402Payment(
-  payload: { amount: string; currency: string; network: string; payTo?: string },
-  privateKey: string,
-  facilitatorUrl: string,
-  rpcUrl: string
-): Promise<string> {
-  const walletService = new WalletService(rpcUrl);
-  const wallet = walletService.createWalletClient(privateKey);
-
-  const { createPaymentPayload, signPaymentPayload } = await import("@x402/core");
-
-  const paymentPayload = await createPaymentPayload({
-    amount: payload.amount,
-    currency: payload.currency,
-    network: payload.network || "eip155:84532",
-    payTo: payload.payTo || "",
-    facilitatorUrl,
-  });
-
-  const signed = await signPaymentPayload(paymentPayload, wallet);
-  return JSON.stringify(signed);
-}
-
-async function verifyX402Payment(facilitatorUrl: string): Promise<{
-  verified: boolean;
-  amount?: string;
-  currency?: string;
-  network?: string;
-}> {
-  try {
-    const response = await axios.get(`${facilitatorUrl}/verify`, {
-      timeout: 10000
-    });
-    return {
-      verified: response.data.verified || false,
-      amount: response.data.amount,
-      currency: response.data.currency,
-      network: response.data.network,
-    };
-  } catch {
-    return { verified: false };
-  }
 }

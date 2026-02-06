@@ -58,6 +58,7 @@ Antiphon defines a structured, verifiable call-and-response protocol where auton
 - Implements `REPUTATION_POST` action (ERC-8004 plugin) for feedback submission
 
 **Example Workflow:**
+```
 1. User: "Analyze this CSV dataset"
 2. Agent A uploads CSV to Storacha → receives input CID
 3. Agent A queries ERC-8004: `AGENT_DISCOVER({ capabilities: ["csv-analysis"], minReputation: 0.7 })`
@@ -67,7 +68,7 @@ Antiphon defines a structured, verifiable call-and-response protocol where auton
 7. Agent A signs payment payload, retries with payment header
 8. Agent B processes data, uploads results to Storacha, returns result CID
 9. Agent A retrieves results, posts reputation feedback
-
+```
 ---
 
 ### Agent B: Data Analyzer (Service Provider)
@@ -92,6 +93,7 @@ Antiphon defines a structured, verifiable call-and-response protocol where auton
 - Agent card includes: `capabilities: ["csv-analysis", "statistics", "data-transformation"]`, `pricing: { baseRate: 0.01, currency: "USDC" }`, `endpoint: "http://localhost:3000/analyze"`
 
 **Example Workflow:**
+```
 1. Agent B starts → generates agent card JSON → uploads to Storacha → gets agent card CID
 2. Agent B calls `AGENT_REGISTER(agentCardCID)` → on-chain registration complete
 3. Agent B starts Express server with x402 middleware on `/analyze`
@@ -100,7 +102,7 @@ Antiphon defines a structured, verifiable call-and-response protocol where auton
 6. Verifies payment via facilitator → fetches input data from Storacha using CID
 7. Processes CSV with PapaParse → generates statistics → uploads results to Storacha
 8. Returns result CID to requester
-
+```
 ---
 
 ## Platform Architecture
@@ -139,6 +141,74 @@ flowchart TB
     P -->|Post feedback| ARR
     IPFS --> CIDs
 ```
+
+---
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      USER / CLIENT                               │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  Agent A (Requester) - ElizaOS                                   │
+│  Port: 3000                                                      │
+│  ├─ ERC-8004 Actions (index.ts)                                 │
+│  │  ├─ AGENT_DISCOVER    → Find Agent B on-chain                │
+│  │  ├─ REPUTATION_QUERY  → Check Agent B reputation             │
+│  │  └─ REPUTATION_POST   → Post feedback after task             │
+│  ├─ x402 Actions (x402-actions-fixed.ts)                        │
+│  │  ├─ PAYMENT_REQUEST   → Send task + handle payment           │
+│  │  └─ PAYMENT_VERIFY    → Verify settlement                    │
+│  └─ Storacha Actions                                             │
+│     ├─ Upload input data  → Get inputCID                        │
+│     └─ Retrieve results   → Get data from resultCID             │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │ HTTP POST
+                           │ /analyze
+                           ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  Agent B Provider Server - Express + x402                        │
+│  Port: 3001                                                      │
+│  File: agent-b-server.js                                         │
+│  ├─ x402 Payment Middleware                                      │
+│  │  └─ Returns 402 if no payment                                │
+│  ├─ Payment Verification                                         │
+│  │  └─ Validates signed payment via facilitator                 │
+│  └─ Task Forwarding                                              │
+│     └─ Sends to ElizaOS Agent B for processing                  │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │ HTTP POST
+                           │ /message
+                           ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  Agent B (Provider) - ElizaOS                                    │
+│  Port: 3000                                                      │
+│  ├─ Process Analysis Task                                        │
+│  ├─ Upload Results to Storacha → resultCID                      │
+│  └─ Return resultCID to Express server                           │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
+│  Base Sepolia Blockchain                                         │
+│  ├─ AgentIdentityRegistry (ERC-8004)                            │
+│  │  ├─ registerAgent(agentCardCID)                              │
+│  │  └─ discoverAgents(capabilities[])                           │
+│  └─ AgentReputationRegistry (ERC-8004)                          │
+│     ├─ postReputation(agent, rating, comment, proofCID)         │
+│     └─ getReputationScore(agent)                                │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
+│  External Services                                               │
+│  ├─ Storacha (IPFS)                                              │
+│  │  └─ Store input/output data via CIDs                         │
+│  └─ x402 Facilitator (Coinbase)                                  │
+│     └─ Payment verification and settlement                       │
+└─────────────────────────────────────────────────────────────────┘
+
+```
+
 
 ---
 
@@ -195,7 +265,7 @@ flowchart LR
 | **Contracts** | ERC-8004 (AgentIdentityRegistry, AgentReputationRegistry, AgentValidationRegistry), Hardhat/Foundry |
 | **Payments** | x402, USDC |
 | **Backend** | Node.js, Express |
-| **Data** | On-chain + content-addressed (no traditional DB) |
+| **Data** | On-chain + content-addressed |
 | **Validation** | Zod; PapaParse for CSV |
 | **Monitoring** | OpenTelemetry, Prometheus, Grafana (planned) |
 
@@ -368,6 +438,7 @@ Rachax402/
 - [Base](https://docs.base.org/)
 - [ERC-8004](https://eips.ethereum.org/EIPS/eip-8004) · [polus-dev/erc-8004](https://github.com/polus-dev/erc-8004)
 - [x402](https://www.x402.org/) · [coinbase/x402](https://github.com/coinbase/x402)
+- [x402-tutorial](https://lablab.ai/ai-tutorials/x402-ai-payments-hackathon-tutorial)
 
 ---
 

@@ -1,0 +1,39 @@
+{
+  "name": "storacha-x402-gated-agent",
+  "version": "1.0.0",
+  "description": "Handling x402 Payment Middleware and providing Storacha Storage Service",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "dev": "node server.js",
+    "start": "node server.js",
+    "test": "node test-client.js"
+  },
+  "keywords": [
+    "x402",
+    "storacha",
+    "ipfs",
+    "bazaar",
+    "payment",
+    "storage"
+  ],
+  "author": "Neha Kumari",
+  "license": "ISC",
+  "dependencies": {
+    "@storacha/client": "^2.0.3",
+    "@x402/axios": "^2.2.0",
+    "@x402/core": "^2.2.0",
+    "@x402/evm": "^2.2.0",
+    "@x402/express": "^2.2.0",
+    "@x402/extensions": "^2.2.0",
+    "@x402/fetch": "^2.2.0",
+    "cors": "^2.8.6",
+    "dotenv": "^17.2.3",
+    "express": "^5.2.1",
+    "multer": "^2.0.2",
+    "viem": "^2.45.1"
+  },
+  "devDependencies": {
+    "form-data": "^4.0.5"
+  }
+}
