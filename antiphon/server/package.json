@@ -2,11 +2,12 @@
   "name": "storacha-x402-gated-agent",
   "version": "1.0.0",
   "description": "Handling x402 Payment Middleware and providing Storacha Storage Service",
-  "main": "server.js",
+  "main": "storacha-server.js",
   "type": "module",
   "scripts": {
-    "dev": "node server.js",
-    "start": "node server.js",
+    "dev": "node storacha-server.js",
+    "dev:agent": "node agentB-server.js",
+    "start": "node storacha-server.js",
     "test": "node test-client.js"
   },
   "keywords": [

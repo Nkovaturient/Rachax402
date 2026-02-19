@@ -399,7 +399,7 @@ async function startProviderAgent(character: Character, directClient: DirectClie
           name: character.name,
           capabilities: character.settings?.capabilities || [],
           pricing: character.settings?.pricing || {},
-          endpoint: character.settings?.endpoint || `http://localhost:${parseInt(getEnv("SERVER_PORT") || "3000")}/analyze`,
+          endpoint: character.settings?.endpoint || `http://localhost:${parseInt(getEnv("SERVER_PORT") || "8001")}/analyze`,
         };
 
         const jsonString = JSON.stringify(agentCard, null, 2);
@@ -559,7 +559,7 @@ async function startProviderExpressServer(character: Character, storageClient: a
     const resourceServer = new x402ResourceServer(facilitatorClient)
       .register("eip155:84532", new ExactEvmScheme());
 
-    const providerPort = parseInt(character.settings?.endpoint?.split(':')[2]?.split('/')[0] || "3001");
+    const providerPort = parseInt(character.settings?.endpoint?.split(':')[2]?.split('/')[0] || "8001");
     const app = express();
     app.use(express.json());
 

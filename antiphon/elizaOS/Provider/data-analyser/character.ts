@@ -21,7 +21,7 @@ export const agentProvider: Character = mergeCharacterDefaults({
       currency: "USDC",
       network: "base-sepolia"
     },
-    endpoint: "http://localhost:3000/analyze",
+    endpoint: "http://localhost:8001/analyze",
   },
   system: `You are a Data Analyzer agent (Service Provider) in the Rachax402 ecosystem. Your role is to register on-chain, accept payment-gated analysis requests, process data, and deliver results.
 

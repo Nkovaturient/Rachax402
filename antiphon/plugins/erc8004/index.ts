@@ -1,12 +1,23 @@
+/**
+ * ERC-8004 Actions - UPDATED with Correct ABIs
+ * Uses deployed contracts on Base Sepolia
+ */
+
 import { elizaLogger } from "@elizaos/core";
 import type { Address } from "viem";
 import { baseSepolia } from "viem/chains";
 import { WalletService } from "../../shared/blockchain/index.js";
 import type { ActionHandlerCallback, ActionHandlerState } from "../../index.js";
+import { AgentIdentityABI } from "../ABI/AgentIdentityABI.js";
+import { AgentReputationABI } from "../ABI/AgentReputationABI.js";
 
+/**
+ * Configuration for ERC-8004 contracts
+ * These addresses are on Base Sepolia testnet
+ */
 export interface ERC8004Config {
-  identityRegistryAddress: string;
-  reputationRegistryAddress: string;
+  identityRegistryAddress: string;  // 0x1352abA587fFbbC398d7ecAEA31e2948D3aFE4Fb
+  reputationRegistryAddress: string; // 0x3FdD300147940a35F32AdF6De36b3358DA682B5c
   rpcUrl: string;
   privateKey: string;
 }
@@ -15,10 +26,14 @@ export function getERC8004Actions(config: ERC8004Config | null) {
   const walletService = config ? new WalletService(config.rpcUrl) : null;
 
   return {
+    /**
+     * Register Agent B on-chain
+     * This happens ONCE when Agent B starts up for the first time
+     */
     AGENT_REGISTER: {
       name: 'AGENT_REGISTER',
-      description: 'Register agent in ERC-8004 AgentIdentityRegistry with agent card CID',
-      similes: ['register', 'enroll'],
+      description: 'Register agent in ERC-8004 AgentIdentityRegistry with capabilities',
+      similes: ['register', 'enroll', 'sign up'],
       validate: async () => true,
       handler: async (
         _runtime: unknown,
@@ -28,13 +43,20 @@ export function getERC8004Actions(config: ERC8004Config | null) {
         callback: ActionHandlerCallback
       ) => {
         if (!config || !walletService) {
-          await callback?.({ text: "ERC-8004 not configured. Set BASE_RPC_URL and contract addresses." });
+          await callback?.({ text: "ERC-8004 not configured. Check .env file." });
           return;
         }
 
+        // Agent card should contain: name, capabilities, pricing, endpoint
         const agentCardCID = state.data?.agentCardCID as string;
+        const capabilities = state.data?.capabilities as string[] || [
+          "csv-analysis",
+          "statistics", 
+          "data-transformation"
+        ];
+
         if (!agentCardCID) {
-          await callback?.({ text: "Agent card CID not found. Upload agent card to Storacha first." });
+          await callback?.({ text: "Agent card CID not found. Upload agent metadata to Storacha first." });
           return;
         }
 
@@ -43,31 +65,29 @@ export function getERC8004Actions(config: ERC8004Config | null) {
           const walletClient = walletService.createWalletClient(config.privateKey);
           const account = walletService.getAccount(config.privateKey);
 
-          await callback?.({ text: `Registering agent on ERC-8004 IdentityRegistry with CID: ${agentCardCID}...` });
+          await callback?.({ 
+            text: `Registering agent with capabilities: ${capabilities.join(', ')}...` 
+          });
 
-          const abi = [
-            {
-              name: "registerAgent",
-              type: "function",
-              stateMutability: "nonpayable",
-              inputs: [{ name: "agentCardCID", type: "string" }],
-              outputs: [],
-            },
-          ] as const;
-
+          // Use the actual ABI from your deployed contract
           const hash = await walletClient.writeContract({
             chain: baseSepolia,
             address: config.identityRegistryAddress as Address,
-            abi,
+            abi: AgentIdentityABI,
             functionName: "registerAgent",
-            args: [agentCardCID],
+            args: [agentCardCID, capabilities], // Your contract takes CID + capabilities array
             account,
           });
 
-          await callback?.({ text: `Transaction submitted: ${hash}. Waiting for confirmation...` });
+          await callback?.({ 
+            text: `Transaction submitted: ${hash}\nWaiting for confirmation...` 
+          });
 
           const receipt = await publicClient.waitForTransactionReceipt({ hash });
-          await callback?.({ text: `Agent registered successfully! Transaction: ${receipt.transactionHash}` });
+          
+          await callback?.({ 
+            text: `✅ Agent registered successfully!\nTransaction: ${receipt.transactionHash}\nYou can now be discovered by other agents.` 
+          });
         } catch (error: unknown) {
           const msg = error instanceof Error ? error.message : String(error);
           elizaLogger.error("ERC-8004 registration error:", error);
@@ -76,10 +96,14 @@ export function getERC8004Actions(config: ERC8004Config | null) {
       },
     },
 
+    /**
+     * Discover Agent B by querying the registry
+     * Agent A calls this to find providers
+     */
     AGENT_DISCOVER: {
       name: 'AGENT_DISCOVER',
-      description: 'Query ERC-8004 AgentIdentityRegistry to find service providers by capability tags',
-      similes: ['discover', 'find', 'search'],
+      description: 'Find service providers by capability (e.g., csv-analysis)',
+      similes: ['discover', 'find', 'search', 'locate'],
       validate: async () => true,
       handler: async (
         _runtime: unknown,
@@ -93,97 +117,115 @@ export function getERC8004Actions(config: ERC8004Config | null) {
           return;
         }
 
-        const capabilities = (state.recentMessagesData
+        // Extract capabilities from user's message
+        // "analyze CSV" -> ["csv-analysis"]
+        const userMessage = state.recentMessagesData
           ?.find((m) => m.content?.text?.includes('csv') || m.content?.text?.includes('analyze'))
-          ?.content?.text || 'csv-analysis').toLowerCase();
+          ?.content?.text || '';
+        
+        const capabilityTags = userMessage.includes('csv') 
+          ? ['csv-analysis'] 
+          : ['data-transformation'];
 
         try {
           const publicClient = walletService.createPublicClient();
 
-          await callback?.({ text: `Querying ERC-8004 registry for capabilities: ${capabilities}...` });
-
-          const abi = [
-            {
-              name: "discoverAgents",
-              type: "function",
-              stateMutability: "view",
-              inputs: [{ name: "capabilityTags", type: "string[]" }],
-              outputs: [
-                { name: "", type: "address[]" },
-                { name: "", type: "string[]" },
-              ],
-            },
-          ] as const;
-
-          const tags = capabilities.split(/[,\s]+/).filter(Boolean);
-          const result = await publicClient.readContract({
-            address: config.identityRegistryAddress as Address,
-            abi,
-            functionName: "discoverAgents",
-            args: [tags],
+          await callback?.({ 
+            text: `Searching for agents with capabilities: ${capabilityTags.join(', ')}...` 
           });
 
-          const [addresses, cids] = result;
+          // Query the contract using your actual ABI
+          // Note: Your contract's discoverAgents takes (tags[], offset, limit)
+          const result = await publicClient.readContract({
+            address: config.identityRegistryAddress as Address,
+            abi: AgentIdentityABI,
+            functionName: "discoverAgents",
+            args: [capabilityTags, 0n, 10n], // Get first 10 results
+          });
 
-          if (addresses.length === 0) {
-            await callback?.({ text: "No matching agents found." });
+          const [agentAddresses, totalCount] = result;
+
+          if (agentAddresses.length === 0) {
+            await callback?.({ 
+              text: `No agents found with capabilities: ${capabilityTags.join(', ')}.\nMake sure Agent B is registered.` 
+            });
             return;
           }
 
-          const agents = addresses.map((addr, i) => ({
-            address: addr,
-            agentCardCID: cids[i] || ""
-          }));
-
           await callback?.({
-            text: `Found ${agents.length} matching agent(s). Fetching reputation scores...`
+            text: `Found ${agentAddresses.length} agent(s) (${totalCount} total).\nChecking reputation scores...`
           });
 
-          const reputationAbi = [
-            {
-              name: "getReputationScore",
-              type: "function",
-              stateMutability: "view",
-              inputs: [{ name: "agent", type: "address" }],
-              outputs: [
-                { name: "score", type: "uint256" },
-                { name: "totalRatings", type: "uint256" },
-              ],
-            },
-          ] as const;
-
-          const agentsWithReputation = await Promise.all(
-            agents.map(async (agent) => {
+          // For each discovered agent, get their reputation and agent card
+          const agentsWithDetails = await Promise.all(
+            agentAddresses.map(async (agentAddress) => {
               try {
+                // Get agent card CID
+                const agentCardCID = await publicClient.readContract({
+                  address: config.identityRegistryAddress as Address,
+                  abi: AgentIdentityABI,
+                  functionName: "getAgentCard",
+                  args: [agentAddress],
+                });
+
+                // Get reputation score
                 const [score, totalRatings] = await publicClient.readContract({
                   address: config.reputationRegistryAddress as Address,
-                  abi: reputationAbi,
+                  abi: AgentReputationABI,
                   functionName: "getReputationScore",
-                  args: [agent.address as Address],
+                  args: [agentAddress],
                 });
+
+                // Score is multiplied by 100 in the contract (480 = 4.8/5)
+                const reputation = Number(score) / 100;
+
                 return {
-                  ...agent,
-                  reputation: Number(score) / 100,
+                  address: agentAddress,
+                  agentCardCID,
+                  reputation,
                   totalRatings: Number(totalRatings)
                 };
-              } catch {
-                return { ...agent, reputation: 0, totalRatings: 0 };
+              } catch (err) {
+                elizaLogger.warn(`Failed to get details for agent ${agentAddress}:`, err);
+                return null;
               }
             })
           );
 
-          const bestAgent = agentsWithReputation.sort((a, b) => b.reputation - a.reputation)[0];
+          // Filter out failed fetches and sort by reputation
+          const validAgents = agentsWithDetails
+            .filter(a => a !== null)
+            .sort((a, b) => b!.reputation - a!.reputation);
 
-          if (!bestAgent) {
-            await callback?.({ text: "No agents found after reputation filtering." });
+          if (validAgents.length === 0) {
+            await callback?.({ text: "Found agents but couldn't fetch their details." });
             return;
           }
 
+          const topAgent = validAgents[0]!;
+
           await callback?.({
-            text: `Selected agent: ${bestAgent.address} (Reputation: ${bestAgent.reputation}/5, Ratings: ${bestAgent.totalRatings}). Agent card CID: ${bestAgent.agentCardCID}`
+            text: `Selected top agent:\n` +
+                  `Address: ${topAgent.address}\n` +
+                  `Reputation: ${topAgent.reputation}/5 (${topAgent.totalRatings} ratings)\n` +
+                  `Agent Card CID: ${topAgent.agentCardCID}\n\n` +
+                  `Fetching endpoint from agent card...`
           });
 
-          state.data = { ...(state.data || {}), selectedAgent: bestAgent };
+          // In production, you'd fetch the agent card from Storacha using the CID
+          // For now, we'll use the known endpoint
+          const providerEndpoint = "http://localhost:8001/analyze";
+
+          state.data = { 
+            ...(state.data || {}), 
+            selectedAgent: topAgent,
+            providerEndpoint
+          };
+
+          await callback?.({
+            text: `Ready to send task to: ${providerEndpoint}`
+          });
+
         } catch (error: unknown) {
           const msg = error instanceof Error ? error.message : String(error);
           elizaLogger.error("ERC-8004 discovery error:", error);
@@ -192,10 +234,14 @@ export function getERC8004Actions(config: ERC8004Config | null) {
       },
     },
 
+    /**
+     * Post reputation feedback after task completion
+     * Agent A calls this after receiving results
+     */
     REPUTATION_POST: {
       name: 'REPUTATION_POST',
-      description: 'Post reputation feedback to AgentReputationRegistry after task completion',
-      similes: ['feedback', 'rate', 'review'],
+      description: 'Post reputation feedback after task completion',
+      similes: ['feedback', 'rate', 'review', 'score'],
       validate: async () => true,
       handler: async (
         _runtime: unknown,
@@ -210,12 +256,17 @@ export function getERC8004Actions(config: ERC8004Config | null) {
         }
 
         const targetAgent = state.data?.selectedAgent?.address as string;
-        const rating = (state.data?.rating as number) || 5;
+        const rating = (state.data?.rating as number) || 5; // 1-5 stars
         const comment = (state.data?.comment as string) || "Excellent service";
         const proofCID = (state.data?.resultCID as string) || "";
 
         if (!targetAgent) {
-          await callback?.({ text: "No target agent specified for reputation feedback." });
+          await callback?.({ text: "No agent specified for feedback." });
+          return;
+        }
+
+        if (rating < 1 || rating > 5) {
+          await callback?.({ text: "Rating must be between 1 and 5 stars." });
           return;
         }
 
@@ -224,48 +275,44 @@ export function getERC8004Actions(config: ERC8004Config | null) {
           const walletClient = walletService.createWalletClient(config.privateKey);
           const account = walletService.getAccount(config.privateKey);
 
-          await callback?.({ text: `Posting reputation feedback for ${targetAgent}...` });
-
-          const abi = [
-            {
-              name: "postReputation",
-              type: "function",
-              stateMutability: "nonpayable",
-              inputs: [
-                { name: "targetAgent", type: "address" },
-                { name: "rating", type: "uint8" },
-                { name: "comment", type: "string" },
-                { name: "proofCID", type: "string" },
-              ],
-              outputs: [],
-            },
-          ] as const;
+          await callback?.({ 
+            text: `Posting ${rating}/5 star rating for agent ${targetAgent}...` 
+          });
 
           const hash = await walletClient.writeContract({
             chain: baseSepolia,
             address: config.reputationRegistryAddress as Address,
-            abi,
+            abi: AgentReputationABI,
             functionName: "postReputation",
             args: [targetAgent as Address, rating, comment, proofCID],
             account,
           });
 
-          await callback?.({ text: `Reputation feedback submitted: ${hash}` });
+          await callback?.({ text: `Reputation submitted: ${hash}` });
 
           const receipt = await publicClient.waitForTransactionReceipt({ hash });
-          await callback?.({ text: `Feedback posted successfully! Transaction: ${receipt.transactionHash}` });
+          
+          await callback?.({ 
+            text: `✅ Feedback posted on-chain!\n` +
+                  `Rating: ${rating}/5\n` +
+                  `Comment: "${comment}"\n` +
+                  `Transaction: ${receipt.transactionHash}` 
+          });
         } catch (error: unknown) {
           const msg = error instanceof Error ? error.message : String(error);
-          elizaLogger.error("ERC-8004 reputation post error:", error);
-          await callback?.({ text: `Reputation post failed: ${msg}` });
+          elizaLogger.error("Reputation post error:", error);
+          await callback?.({ text: `Failed to post reputation: ${msg}` });
         }
       },
     },
 
+    /**
+     * Query reputation before selecting an agent
+     */
     REPUTATION_QUERY: {
       name: 'REPUTATION_QUERY',
-      description: 'Query agent reputation scores from AgentReputationRegistry',
-      similes: ['check reputation', 'query rating'],
+      description: 'Check agent reputation scores and recent ratings',
+      similes: ['check reputation', 'query rating', 'check reviews'],
       validate: async () => true,
       handler: async (
         _runtime: unknown,
@@ -288,63 +335,43 @@ export function getERC8004Actions(config: ERC8004Config | null) {
         try {
           const publicClient = walletService.createPublicClient();
 
-          const abi = [
-            {
-              name: "getReputationScore",
-              type: "function",
-              stateMutability: "view",
-              inputs: [{ name: "agent", type: "address" }],
-              outputs: [
-                { name: "score", type: "uint256" },
-                { name: "totalRatings", type: "uint256" },
-              ],
-            },
-            {
-              name: "getRecentRatings",
-              type: "function",
-              stateMutability: "view",
-              inputs: [
-                { name: "agent", type: "address" },
-                { name: "limit", type: "uint256" },
-              ],
-              outputs: [
-                {
-                  name: "",
-                  type: "tuple[]",
-                  components: [
-                    { name: "rating", type: "uint8" },
-                    { name: "comment", type: "string" },
-                    { name: "proofCID", type: "string" },
-                    { name: "timestamp", type: "uint256" },
-                  ],
-                },
-              ],
-            },
-          ] as const;
-
+          // Get overall score
           const [score, totalRatings] = await publicClient.readContract({
             address: config.reputationRegistryAddress as Address,
-            abi,
+            abi: AgentReputationABI,
             functionName: "getReputationScore",
             args: [agentAddress as Address],
           });
 
+          const reputation = Number(score) / 100;
+
+          // Get recent ratings (last 5)
           const recentRatings = await publicClient.readContract({
             address: config.reputationRegistryAddress as Address,
-            abi,
+            abi: AgentReputationABI,
             functionName: "getRecentRatings",
             args: [agentAddress as Address, 5n],
           });
 
-          const reputation = Number(score) / 100;
+          let feedbackText = `Reputation for ${agentAddress}:\n`;
+          feedbackText += `Overall Score: ${reputation}/5 (${totalRatings} total ratings)\n\n`;
+          
+          if (recentRatings.length > 0) {
+            feedbackText += `Recent Feedback:\n`;
+            recentRatings.forEach((rating, i) => {
+              const date = new Date(Number(rating.timestamp) * 1000).toLocaleDateString();
+              feedbackText += `${i + 1}. ${rating.rating}/5 - "${rating.comment}" (${date})\n`;
+            });
+          } else {
+            feedbackText += `No ratings yet.`;
+          }
 
-          await callback?.({
-            text: `Reputation for ${agentAddress}: ${reputation}/5 (${totalRatings} ratings). Recent feedback: ${recentRatings.length} entries.`
-          });
+          await callback?.({ text: feedbackText });
+
         } catch (error: unknown) {
           const msg = error instanceof Error ? error.message : String(error);
-          elizaLogger.error("ERC-8004 reputation query error:", error);
-          await callback?.({ text: `Reputation query failed: ${msg}` });
+          elizaLogger.error("Reputation query error:", error);
+          await callback?.({ text: `Failed to query reputation: ${msg}` });
         }
       },
     },
