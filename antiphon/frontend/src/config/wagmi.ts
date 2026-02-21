@@ -1,0 +1,42 @@
+import { getDefaultConfig } from '@rainbow-me/rainbowkit';
+import { baseSepolia } from 'wagmi/chains';
+
+export const config = getDefaultConfig({
+  appName: 'Rachax402',
+  projectId: 'rachax402-marketplace', // WalletConnect project ID placeholder
+  chains: [baseSepolia],
+  ssr: false,
+});
+
+// USDC contract on Base Sepolia
+export const USDC_ADDRESS = '0x036CbD53842c5426634e7929541eC2318f3dCF7e' as const;
+
+export const USDC_ABI = [
+  {
+    name: 'balanceOf',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [{ name: 'account', type: 'address' }],
+    outputs: [{ name: '', type: 'uint256' }],
+  },
+  {
+    name: 'approve',
+    type: 'function',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'spender', type: 'address' },
+      { name: 'amount', type: 'uint256' },
+    ],
+    outputs: [{ name: '', type: 'bool' }],
+  },
+] as const;
+
+// API endpoints
+export const API_ENDPOINTS = {
+  orchestrator: 'http://localhost:3000/message',
+  analyze: 'http://localhost:8001/analyze',
+  storage: 'http://localhost:8000/upload',
+} as const;
+
+// ERC-8004 Identity Registry (example address)
+export const IDENTITY_REGISTRY = '0x1352abA0000000000000000000003aFE4Fb' as const;
