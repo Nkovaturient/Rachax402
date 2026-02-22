@@ -4,11 +4,12 @@ import { useMarketplaceStore } from '../store/useMarketplaceStore';
 const TransactionStatus = () => {
   const { txHash, error, setError, currentStep } = useMarketplaceStore();
 
-  if (!txHash && !error) return null;
+  const isValidTxHash = txHash && /^0x[a-fA-F0-9]{64}$/.test(txHash);
+  if (!isValidTxHash && !error) return null;
 
   return (
     <div className="max-w-4xl mx-auto px-6 py-2">
-      {txHash && currentStep > 0 && (
+      {isValidTxHash && txHash && currentStep > 0 && (
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
@@ -22,7 +23,7 @@ const TransactionStatus = () => {
             rel="noreferrer"
             className="font-mono text-indigo hover:underline truncate"
           >
-            {txHash.slice(0, 10)}...{txHash.slice(-8)}
+            {`${txHash.slice(0, 10)}...${txHash.slice(-8)}`}
           </a>
         </motion.div>
       )}

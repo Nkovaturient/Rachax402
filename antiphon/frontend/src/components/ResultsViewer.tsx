@@ -11,6 +11,8 @@ const ResultsViewer = () => {
 
   if (!showAnalysis && !showStorage) return null;
 
+  const stats = analysisResults?.statistics;
+
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
     setCopied(true);
@@ -38,34 +40,36 @@ const ResultsViewer = () => {
           <div className="grid grid-cols-2 gap-4">
             <div className="p-6 rounded-xl bg-card">
               <div className="text-sm text-muted-foreground mb-1">Rows Analyzed</div>
-              <div className="text-3xl font-bold text-foreground">{analysisResults.statistics.rowCount}</div>
+              <div className="text-3xl font-bold text-foreground">{stats?.rowCount ?? 0}</div>
             </div>
             <div className="p-6 rounded-xl bg-card">
               <div className="text-sm text-muted-foreground mb-1">Columns</div>
-              <div className="text-3xl font-bold text-foreground">{analysisResults.statistics.columnCount}</div>
+              <div className="text-3xl font-bold text-foreground">{stats?.columnCount ?? 0}</div>
             </div>
           </div>
 
           {/* Numerical stats */}
+          {stats?.numericalStats && Object.keys(stats.numericalStats).length > 0 && (
           <div className="space-y-3">
             <h3 className="text-lg font-semibold text-foreground">Statistical Summary</h3>
-            {Object.entries(analysisResults.statistics.numericalStats).map(([col, stats]: [string, { mean: number; median: number; stdDev: number; min: number; max: number }]) => (
+            {Object.entries(stats.numericalStats).map(([col, colStats]: [string, { mean: number; median: number; stdDev: number; min: number; max: number }]) => (
               <div key={col} className="p-4 rounded-xl bg-card">
                 <div className="font-semibold text-foreground mb-3 capitalize">{col}</div>
                 <div className="grid grid-cols-4 gap-3 text-sm">
                   {(['mean', 'median', 'stdDev', 'min'] as const).map((k) => (
                     <div key={k}>
                       <div className="text-muted-foreground capitalize">{k === 'stdDev' ? 'Std Dev' : k}</div>
-                      <div className="font-semibold text-violet">{typeof stats[k] === 'number' ? stats[k].toFixed(1) : stats[k]}</div>
+                      <div className="font-semibold text-violet">{typeof colStats[k] === 'number' ? colStats[k].toFixed(1) : colStats[k]}</div>
                     </div>
                   ))}
                 </div>
               </div>
             ))}
           </div>
+          )}
 
           {/* Insights */}
-          {analysisResults.insights.length > 0 && (
+          {analysisResults.insights && analysisResults.insights.length > 0 && (
             <div className="p-6 rounded-xl bg-orange/10 border border-orange/30">
               <h3 className="text-lg font-semibold text-foreground mb-3 flex items-center gap-2">💡 Insights</h3>
               <ul className="space-y-2">
@@ -80,6 +84,7 @@ const ResultsViewer = () => {
           )}
 
           {/* Actions */}
+          {analysisResults.resultCID && (
           <div className="flex gap-4">
             <a
               href={`https://w3s.link/ipfs/${analysisResults.resultCID}`}
@@ -96,6 +101,7 @@ const ResultsViewer = () => {
               Rate Agent
             </button>
           </div>
+          )}
         </>
       )}
 
@@ -109,7 +115,7 @@ const ResultsViewer = () => {
             <div className="flex items-center justify-between p-3 rounded-lg bg-card">
               <div>
                 <div className="text-xs text-muted-foreground">CID</div>
-                <div className="font-mono text-sm text-foreground truncate max-w-xs">{storageResults.cid}</div>
+                <div className="font-mono text-sm text-foreground">{storageResults.cid}</div>
               </div>
               <button
                 onClick={() => copyToClipboard(storageResults.cid)}

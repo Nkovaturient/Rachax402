@@ -11,6 +11,14 @@
  * 4. x402 middleware validates payment
  * 5. This handler processes the CSV analysis
  * 6. Returns resultCID to Agent A
+ * 
+ * 
+ * https://bafkreidvue5jvvuns5a3l3ygziw5z6arymfl3fjotv4o6wlqgsmxycpjze.ipfs.w3s.link/
+ * 
+ * Test:
+ * curl -X POST -F "inputCID=bafkreig6xv5nwphfmvcnektpnojts33jqcuam7bmye2pb54adnrtccjlsu" http://localhost:8001/analyze
+ * curl http://localhost:8001/health
+ * 
  */
 
 import express from 'express';
@@ -19,7 +27,7 @@ import { paymentMiddleware } from '@x402/express';
 import { x402ResourceServer, HTTPFacilitatorClient } from '@x402/core/server';
 import { ExactEvmScheme } from '@x402/evm/exact/server';
 import Papa from 'papaparse';
-import { initStorachaClient } from './initStoracha.js';
+import { uploadFileToStoracha } from './initStoracha.js';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -63,7 +71,7 @@ const routes = {
     accepts: [
       {
         scheme: 'exact',      // Payment scheme
-        price: '$0.01',       // Price in USDC
+        price: '$0.0001',       // Price in USDC
         network: 'eip155:84532', // Base Sepolia network
         payTo: RECIPIENT_ADDRESS, // Where payment goes
       },
@@ -213,16 +221,12 @@ async function processAnalysisTask(inputCID, requirements) {
 
     // Step 3: Upload results to Storacha
     console.log('   📤 Uploading results to Storacha...');
-    if (!storachaClient) {
-      await initStorachaClient();
-    }
-
     const resultsBlob = new Blob([formattedResults], { type: 'text/plain' });
     const resultsFile = new File([resultsBlob], 'analysis-results.txt', { 
       type: 'text/plain' 
     });
-    
-    const resultCID = await storachaClient.uploadFile(resultsFile);
+    const uploadResult = await uploadFileToStoracha(resultsFile);
+    const resultCID = uploadResult.cid;
     console.log(`   ✅ Results uploaded: ${resultCID}`);
 
     return {
@@ -297,7 +301,7 @@ app.get('/health', (req, res) => {
     recipient: RECIPIENT_ADDRESS,
     network: 'eip155:84532',
     facilitator: FACILITATOR_URL,
-    storachaReady: storachaClient !== null,
+    storachaReady: true,
   });
 });
 
@@ -306,9 +310,6 @@ app.get('/health', (req, res) => {
  */
 async function start() {
   try {
-    // Initialize Storacha first
-    await initStorachaClient();
-
     // Start Express server
     app.listen(PORT, () => {
       console.log(`\n🤖 Agent B Provider running on http://localhost:${PORT}`);
@@ -316,7 +317,7 @@ async function start() {
       console.log(`🌐 Network: Base Sepolia (eip155:84532)`);
       console.log(`📡 Facilitator: ${FACILITATOR_URL}`);
       console.log(`\n📋 Protected endpoints:`);
-      console.log(`   POST /analyze - $0.01 per analysis`);
+      console.log(`   POST /analyze - $0.0001 per analysis`);
       console.log(`\n💡 Ready to process data analysis requests!\n`);
     });
   } catch (error) {

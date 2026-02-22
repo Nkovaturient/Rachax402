@@ -15,7 +15,7 @@ const Header = () => {
           </div>
           <div>
             <h1 className="text-2xl font-bold text-foreground tracking-tight">Rachax402</h1>
-            <p className="text-xs text-muted-foreground">AI Agent Marketplace</p>
+            <p className="text-xs text-muted-foreground">Agent Coordination System</p>
           </div>
         </div>
 

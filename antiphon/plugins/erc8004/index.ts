@@ -28,7 +28,6 @@ export function getERC8004Actions(config: ERC8004Config | null) {
   return {
     /**
      * Register Agent B on-chain
-     * This happens ONCE when Agent B starts up for the first time
      */
     AGENT_REGISTER: {
       name: 'AGENT_REGISTER',
@@ -47,11 +46,11 @@ export function getERC8004Actions(config: ERC8004Config | null) {
           return;
         }
 
-        // Agent card should contain: name, capabilities, pricing, endpoint
         const agentCardCID = state.data?.agentCardCID as string;
         const capabilities = state.data?.capabilities as string[] || [
+          "DataAnalyzer",
           "csv-analysis",
-          "statistics", 
+          "statistics",
           "data-transformation"
         ];
 
@@ -65,28 +64,27 @@ export function getERC8004Actions(config: ERC8004Config | null) {
           const walletClient = walletService.createWalletClient(config.privateKey);
           const account = walletService.getAccount(config.privateKey);
 
-          await callback?.({ 
-            text: `Registering agent with capabilities: ${capabilities.join(', ')}...` 
+          await callback?.({
+            text: `Registering agent with capabilities: ${capabilities.join(', ')}...`
           });
 
-          // Use the actual ABI from your deployed contract
           const hash = await walletClient.writeContract({
             chain: baseSepolia,
             address: config.identityRegistryAddress as Address,
             abi: AgentIdentityABI,
             functionName: "registerAgent",
-            args: [agentCardCID, capabilities], // Your contract takes CID + capabilities array
+            args: [agentCardCID, capabilities],
             account,
           });
 
-          await callback?.({ 
-            text: `Transaction submitted: ${hash}\nWaiting for confirmation...` 
+          await callback?.({
+            text: `Transaction submitted: ${hash}\nWaiting for confirmation...`
           });
 
           const receipt = await publicClient.waitForTransactionReceipt({ hash });
-          
-          await callback?.({ 
-            text: `✅ Agent registered successfully!\nTransaction: ${receipt.transactionHash}\nYou can now be discovered by other agents.` 
+
+          await callback?.({
+            text: `✅ Agent registered successfully!\nTransaction: ${receipt.transactionHash}\nYou can now be discovered by other agents.`
           });
         } catch (error: unknown) {
           const msg = error instanceof Error ? error.message : String(error);
@@ -95,6 +93,7 @@ export function getERC8004Actions(config: ERC8004Config | null) {
         }
       },
     },
+
 
     /**
      * Discover Agent B by querying the registry
@@ -117,25 +116,28 @@ export function getERC8004Actions(config: ERC8004Config | null) {
           return;
         }
 
-        // Extract capabilities from user's message
-        // "analyze CSV" -> ["csv-analysis"]
+        // Determine capability tags from user message or state
         const userMessage = state.recentMessagesData
-          ?.find((m) => m.content?.text?.includes('csv') || m.content?.text?.includes('analyze'))
+          ?.find((m) => m.content?.text)
           ?.content?.text || '';
-        
-        const capabilityTags = userMessage.includes('csv') 
-          ? ['csv-analysis'] 
-          : ['data-transformation'];
+
+        let capabilityTags: string[];
+        if (userMessage.includes('csv') || userMessage.includes('analyze')) {
+          capabilityTags = ['csv-analysis', 'DataAnalyzer', 'data-transformation'];
+        } else if (userMessage.includes('store') || userMessage.includes('storage')) {
+          capabilityTags = ['file-storage', 'Storacha', 'ipfs', 'decentralized-storage'];
+        } else {
+          capabilityTags = ['csv-analysis', 'DataAnalyzer', 'data-transformation']; // Default
+        }
 
         try {
           const publicClient = walletService.createPublicClient();
 
-          await callback?.({ 
-            text: `Searching for agents with capabilities: ${capabilityTags.join(', ')}...` 
+          await callback?.({
+            text: `🔍 Searching for agents with capabilities: ${capabilityTags.join(', ')}...`
           });
 
-          // Query the contract using your actual ABI
-          // Note: Your contract's discoverAgents takes (tags[], offset, limit)
+          // Query the blockchain
           const result = await publicClient.readContract({
             address: config.identityRegistryAddress as Address,
             abi: AgentIdentityABI,
@@ -146,21 +148,21 @@ export function getERC8004Actions(config: ERC8004Config | null) {
           const [agentAddresses, totalCount] = result;
 
           if (agentAddresses.length === 0) {
-            await callback?.({ 
-              text: `No agents found with capabilities: ${capabilityTags.join(', ')}.\nMake sure Agent B is registered.` 
+            await callback?.({
+              text: `❌ No agents found with capabilities: ${capabilityTags.join(', ')}.\n\n` +
+                `Make sure services are registered on-chain.\n`
             });
             return;
           }
 
           await callback?.({
-            text: `Found ${agentAddresses.length} agent(s) (${totalCount} total).\nChecking reputation scores...`
+            text: `✅ Found ${agentAddresses.length} agent(s) (${totalCount} total).\n⭐ Checking reputation scores...`
           });
 
-          // For each discovered agent, get their reputation and agent card
+          // Get details for each agent
           const agentsWithDetails = await Promise.all(
-            agentAddresses.map(async (agentAddress) => {
+            agentAddresses.map(async (agentAddress: Address) => {
               try {
-                // Get agent card CID
                 const agentCardCID = await publicClient.readContract({
                   address: config.identityRegistryAddress as Address,
                   abi: AgentIdentityABI,
@@ -194,42 +196,79 @@ export function getERC8004Actions(config: ERC8004Config | null) {
 
           // Filter out failed fetches and sort by reputation
           const validAgents = agentsWithDetails
-            .filter(a => a !== null)
-            .sort((a, b) => b!.reputation - a!.reputation);
+            .filter((a: { reputation: number; totalRatings: number; agentCardCID: string; address: Address }) => a !== null)
+            .sort((a: { reputation: number; totalRatings: number; agentCardCID: string; address: Address }, b: { reputation: number; totalRatings: number; agentCardCID: string; address: Address }) => b!.reputation - a!.reputation);
 
           if (validAgents.length === 0) {
             await callback?.({ text: "Found agents but couldn't fetch their details." });
             return;
           }
 
-          const topAgent = validAgents[0]!;
+          const topAgent = validAgents[0] as { reputation: number; totalRatings: number; agentCardCID: string; address: Address };
 
           await callback?.({
-            text: `Selected top agent:\n` +
-                  `Address: ${topAgent.address}\n` +
-                  `Reputation: ${topAgent.reputation}/5 (${topAgent.totalRatings} ratings)\n` +
-                  `Agent Card CID: ${topAgent.agentCardCID}\n\n` +
-                  `Fetching endpoint from agent card...`
+            text: `🏆 Selected top agent:\n` +
+              `• Address: ${topAgent.address.slice(0, 10)}...${topAgent.address.slice(-8)}\n` +
+              `• Reputation: ${topAgent.reputation}/5 ⭐ (${topAgent.totalRatings} ratings)\n` +
+              `• Agent Card: ${topAgent.agentCardCID.slice(0, 15)}...\n\n` +
+              `📡 Fetching service details from IPFS...`
           });
 
-          // In production, you'd fetch the agent card from Storacha using the CID
-          // For now, we'll use the known endpoint
-          const providerEndpoint = "http://localhost:8001/analyze";
+          // fetch the agent card from Storacha
+          let providerEndpoint: string;
+          let pricing: any;
+          let agentName: string = "Third Party Service";
 
-          state.data = { 
-            ...(state.data || {}), 
+          try {
+            const agentCardResponse = await fetch(`https://w3s.link/ipfs/${topAgent.agentCardCID}`);
+
+            if (!agentCardResponse.ok) {
+              throw new Error(`HTTP ${agentCardResponse.status}: ${agentCardResponse.statusText}`);
+            }
+
+            const agentCard = await agentCardResponse.json();
+            providerEndpoint = agentCard.endpoint;
+            pricing = agentCard.pricing;
+            agentName = agentCard.name || "Third Party Service";
+
+            await callback?.({
+              text: `✅ Service details retrieved:\n` +
+                `• Service: ${agentName}\n` +
+                `• Endpoint: ${providerEndpoint}\n` +
+                `• Price: ${pricing.baseRate || pricing.upload} ${pricing.currency}\n` +
+                `• Network: ${pricing.network}`
+            });
+          } catch (error: unknown) {
+            const msg = error instanceof Error ? error.message : String(error);
+            elizaLogger.warn(`Failed to fetch agent card from Storacha: ${msg}`);
+
+            // Fallback to known endpoints if fetch fails
+            providerEndpoint = capabilityTags.includes('DataAnalyzer')
+              ? "http://localhost:8001/analyze"
+              : "http://localhost:8000/upload";
+
+            await callback?.({
+              text: `⚠️  Agent card fetch failed. Using fallback endpoint: ${providerEndpoint}\n` +
+                `Error: ${msg}`
+            });
+          }
+
+          state.data = {
+            ...(state.data || {}),
             selectedAgent: topAgent,
-            providerEndpoint
+            providerEndpoint,
+            pricing,
+            agentName
           };
 
           await callback?.({
-            text: `Ready to send task to: ${providerEndpoint}`
+            text: `🚀 Ready to send task to: ${providerEndpoint}`
           });
 
         } catch (error: unknown) {
           const msg = error instanceof Error ? error.message : String(error);
           elizaLogger.error("ERC-8004 discovery error:", error);
-          await callback?.({ text: `Discovery failed: ${msg}` });
+          await callback?.({ text: `❌ Discovery failed: ${msg}` });
         }
       },
     },
@@ -256,7 +295,7 @@ export function getERC8004Actions(config: ERC8004Config | null) {
         }
 
         const targetAgent = state.data?.selectedAgent?.address as string;
-        const rating = (state.data?.rating as number) || 5; // 1-5 stars
+        const rating = (state.data?.rating as number) || 5;
         const comment = (state.data?.comment as string) || "Excellent service";
         const proofCID = (state.data?.resultCID as string) || "";
 
@@ -275,8 +314,8 @@ export function getERC8004Actions(config: ERC8004Config | null) {
           const walletClient = walletService.createWalletClient(config.privateKey);
           const account = walletService.getAccount(config.privateKey);
 
-          await callback?.({ 
-            text: `Posting ${rating}/5 star rating for agent ${targetAgent}...` 
+          await callback?.({
+            text: `⭐ Posting ${rating}/5 star rating for agent ${targetAgent.slice(0, 10)}...`
           });
 
           const hash = await walletClient.writeContract({
@@ -288,15 +327,15 @@ export function getERC8004Actions(config: ERC8004Config | null) {
             account,
           });
 
-          await callback?.({ text: `Reputation submitted: ${hash}` });
+          await callback?.({ text: `📝 Reputation submitted: ${hash}` });
 
           const receipt = await publicClient.waitForTransactionReceipt({ hash });
-          
-          await callback?.({ 
+
+          await callback?.({
             text: `✅ Feedback posted on-chain!\n` +
-                  `Rating: ${rating}/5\n` +
-                  `Comment: "${comment}"\n` +
-                  `Transaction: ${receipt.transactionHash}` 
+              `• Rating: ${rating}/5 ⭐\n` +
+              `• Comment: "${comment}"\n` +
+              `• Transaction: ${receipt.transactionHash}`
           });
         } catch (error: unknown) {
           const msg = error instanceof Error ? error.message : String(error);
@@ -335,7 +374,6 @@ export function getERC8004Actions(config: ERC8004Config | null) {
         try {
           const publicClient = walletService.createPublicClient();
 
-          // Get overall score
           const [score, totalRatings] = await publicClient.readContract({
             address: config.reputationRegistryAddress as Address,
             abi: AgentReputationABI,
@@ -345,7 +383,6 @@ export function getERC8004Actions(config: ERC8004Config | null) {
 
           const reputation = Number(score) / 100;
 
-          // Get recent ratings (last 5)
           const recentRatings = await publicClient.readContract({
             address: config.reputationRegistryAddress as Address,
             abi: AgentReputationABI,
@@ -353,11 +390,11 @@ export function getERC8004Actions(config: ERC8004Config | null) {
             args: [agentAddress as Address, 5n],
           });
 
-          let feedbackText = `Reputation for ${agentAddress}:\n`;
-          feedbackText += `Overall Score: ${reputation}/5 (${totalRatings} total ratings)\n\n`;
-          
+          let feedbackText = `⭐ Reputation for ${agentAddress.slice(0, 10)}...${agentAddress.slice(-8)}:\n`;
+          feedbackText += `• Score: ${reputation}/5 ⭐ (${totalRatings} ratings)\n\n`;
+
           if (recentRatings.length > 0) {
-            feedbackText += `Recent Feedback:\n`;
+            feedbackText += `📋 Recent Feedback:\n`;
             recentRatings.forEach((rating, i) => {
               const date = new Date(Number(rating.timestamp) * 1000).toLocaleDateString();
               feedbackText += `${i + 1}. ${rating.rating}/5 - "${rating.comment}" (${date})\n`;

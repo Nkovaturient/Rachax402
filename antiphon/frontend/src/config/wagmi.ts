@@ -3,7 +3,7 @@ import { baseSepolia } from 'wagmi/chains';
 
 export const config = getDefaultConfig({
   appName: 'Rachax402',
-  projectId: 'rachax402-marketplace', // WalletConnect project ID placeholder
+  projectId: '1741e7ac98d8c25ce68641ec7ca909f9', 
   chains: [baseSepolia],
   ssr: false,
 });
@@ -38,5 +38,5 @@ export const API_ENDPOINTS = {
   storage: 'http://localhost:8000/upload',
 } as const;
 
-// ERC-8004 Identity Registry (example address)
-export const IDENTITY_REGISTRY = '0x1352abA0000000000000000000003aFE4Fb' as const;
+// ERC-8004 Identity Registry
+export const IDENTITY_REGISTRY = '0x1352abA587fFbbC398d7ecAEA31e2948D3aFE4Fb' as const;

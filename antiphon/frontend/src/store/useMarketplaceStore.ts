@@ -56,6 +56,13 @@ export const storageSteps: Step[] = [
   { id: 4, label: 'Complete', icon: '✅', protocol: 'green', desc: 'File stored on IPFS' },
 ];
 
+export interface PaymentContext {
+  paymentRequired: string;
+  url: string;
+  forService: 'upload' | 'analyze';
+  buildInit: () => RequestInit;
+}
+
 interface MarketplaceState {
   service: ServiceType;
   currentStep: number;
@@ -70,8 +77,10 @@ interface MarketplaceState {
   error: string | null;
   showPaymentModal: boolean;
   showRatingModal: boolean;
+  paymentContext: PaymentContext | null;
 
   setService: (s: ServiceType) => void;
+  setPaymentContext: (ctx: PaymentContext | null) => void;
   setCurrentStep: (step: number) => void;
   setIsProcessing: (v: boolean) => void;
   setFile: (f: File | null) => void;
@@ -101,11 +110,12 @@ const initialState = {
   error: null,
   showPaymentModal: false,
   showRatingModal: false,
+  paymentContext: null,
 };
 
 export const useMarketplaceStore = create<MarketplaceState>((set) => ({
   ...initialState,
-  setService: (service) => set({ service, currentStep: 0, isProcessing: false, file: null, error: null, analysisResults: null, storageResults: null }),
+  setService: (service) => set({ service, currentStep: 0, isProcessing: false, file: null, error: null, analysisResults: null, storageResults: null, txHash: null }),
   setCurrentStep: (currentStep) => set({ currentStep }),
   setIsProcessing: (isProcessing) => set({ isProcessing }),
   setFile: (file) => set({ file }),
@@ -118,5 +128,6 @@ export const useMarketplaceStore = create<MarketplaceState>((set) => ({
   setError: (error) => set({ error }),
   setShowPaymentModal: (showPaymentModal) => set({ showPaymentModal }),
   setShowRatingModal: (showRatingModal) => set({ showRatingModal }),
+  setPaymentContext: (paymentContext) => set({ paymentContext }),
   reset: () => set(initialState),
 }));

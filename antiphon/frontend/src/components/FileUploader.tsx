@@ -3,9 +3,22 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useMarketplaceStore } from '../store/useMarketplaceStore';
 import { useAccount } from 'wagmi';
 import { API_ENDPOINTS } from '../config/wagmi';
+import { getPaymentRequiredFromResponse } from '../lib/x402';
 
 const FileUploader = () => {
-  const { service, file, setFile, setIsProcessing, setCurrentStep, setError, setDiscoveredAgent, setInputCID, setShowPaymentModal, setAnalysisResults, setStorageResults } = useMarketplaceStore();
+  const {
+    service,
+    file,
+    setFile,
+    setIsProcessing,
+    setCurrentStep,
+    setError,
+    setTxHash,
+    setDiscoveredAgent,
+    setInputCID,
+    setShowPaymentModal,
+    setPaymentContext,
+  } = useMarketplaceStore();
   const { isConnected } = useAccount();
   const [isDragging, setIsDragging] = useState(false);
 
@@ -19,15 +32,15 @@ const FileUploader = () => {
     setIsDragging(false);
     const f = e.dataTransfer.files?.[0];
     if (f) setFile(f);
-  }, [setFile]);
+  }, []);
 
   const runPipeline = async () => {
     if (!file) return;
     setError(null);
+    setTxHash(null);
     setIsProcessing(true);
 
     try {
-      // Step 1: Discovery
       setCurrentStep(1);
       await delay(1500);
       setDiscoveredAgent({
@@ -38,37 +51,130 @@ const FileUploader = () => {
       });
 
       if (service === 'analyze') {
-        // Step 2: Reputation check
         setCurrentStep(2);
         await delay(1200);
 
-        // Step 3: Upload to Storacha
         setCurrentStep(3);
         const formData = new FormData();
         formData.append('file', file);
-        try {
-          const uploadRes = await fetch(API_ENDPOINTS.storage, { method: 'POST', body: formData });
-          const uploadData = await uploadRes.json();
-          setInputCID(uploadData.cid || 'bafybei...mock');
-        } catch {
-          setInputCID('bafybei...simulatedCID');
+        const uploadRes = await fetch(API_ENDPOINTS.storage, { method: 'POST', body: formData });
+
+        if (uploadRes.status === 402) {
+          const paymentRequired = getPaymentRequiredFromResponse(uploadRes);
+          if (!paymentRequired) {
+            setError('Payment required but no PAYMENT-REQUIRED header received');
+            setIsProcessing(false);
+            return;
+          }
+          setCurrentStep(4);
+          setPaymentContext({
+            paymentRequired,
+            url: API_ENDPOINTS.storage,
+            forService: 'upload',
+            buildInit: () => {
+              const fd = new FormData();
+              fd.append('file', file);
+              return { method: 'POST', body: fd };
+            },
+          });
+          setShowPaymentModal(true);
+          return;
         }
+
+        if (!uploadRes.ok) {
+          const err = await uploadRes.json().catch(() => ({}));
+          throw new Error(err.message || err.error || `Upload failed: ${uploadRes.status}`);
+        }
+        const uploadData = await uploadRes.json();
+        const cid = uploadData.data?.cid || uploadData.cid;
+        setInputCID(cid || '');
         await delay(800);
 
-        // Step 4: Payment
         setCurrentStep(4);
-        setShowPaymentModal(true);
-        // Wait for payment to be signed (handled by PaymentModal)
-        return;
+        const analyzeBody = { inputCID: cid, requirements: 'statistical summary and trend analysis' };
+        const analyzeRes = await fetch(API_ENDPOINTS.analyze, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(analyzeBody),
+        });
+
+        if (analyzeRes.status === 402) {
+          const paymentRequired = getPaymentRequiredFromResponse(analyzeRes);
+          if (!paymentRequired) {
+            setError('Payment required but no PAYMENT-REQUIRED header received');
+            setIsProcessing(false);
+            return;
+          }
+          setPaymentContext({
+            paymentRequired,
+            url: API_ENDPOINTS.analyze,
+            forService: 'analyze',
+            buildInit: () => ({
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(analyzeBody),
+            }),
+          });
+          setShowPaymentModal(true);
+          return;
+        }
+
+        if (!analyzeRes.ok) {
+          const err = await analyzeRes.json().catch(() => ({}));
+          throw new Error(err.message || err.error || `Analysis failed: ${analyzeRes.status}`);
+        }
+        const analyzeData = await analyzeRes.json();
+        useMarketplaceStore.getState().setAnalysisResults({
+          summary: analyzeData.summary || '',
+          statistics: analyzeData.statistics || { rowCount: 0, columnCount: 0, numericalStats: {} },
+          insights: analyzeData.insights || [],
+          resultCID: analyzeData.resultCID || '',
+        });
+        setCurrentStep(6);
+        setIsProcessing(false);
       } else {
-        // Storage flow: 4 steps
-        // Step 2: Payment
         setCurrentStep(2);
-        setShowPaymentModal(true);
-        return;
+        const formData = new FormData();
+        formData.append('file', file);
+        const uploadRes = await fetch(API_ENDPOINTS.storage, { method: 'POST', body: formData });
+
+        if (uploadRes.status === 402) {
+          const paymentRequired = getPaymentRequiredFromResponse(uploadRes);
+          if (!paymentRequired) {
+            setError('Payment required but no PAYMENT-REQUIRED header received');
+            setIsProcessing(false);
+            return;
+          }
+          setPaymentContext({
+            paymentRequired,
+            url: API_ENDPOINTS.storage,
+            forService: 'upload',
+            buildInit: () => {
+              const fd = new FormData();
+              fd.append('file', file);
+              return { method: 'POST', body: fd };
+            },
+          });
+          setShowPaymentModal(true);
+          return;
+        }
+
+        if (!uploadRes.ok) {
+          const err = await uploadRes.json().catch(() => ({}));
+          throw new Error(err.message || err.error || `Upload failed: ${uploadRes.status}`);
+        }
+        const uploadData = await uploadRes.json();
+        const data = uploadData.data || uploadData;
+        useMarketplaceStore.getState().setStorageResults({
+          cid: data.cid || '',
+          fileName: file.name,
+          fileSize: file.size,
+        });
+        setCurrentStep(4);
+        setIsProcessing(false);
       }
-    } catch (err: any) {
-      setError(err.message || 'Pipeline failed');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Pipeline failed');
       setIsProcessing(false);
     }
   };

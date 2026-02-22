@@ -1,10 +1,15 @@
 /**
  * Storacha x402 Agent Server with Bazaar Discovery
  * Implements x402 protocol for Storacha Storage services with enhanced discovery
+ * https://bafkreiak4xhmuq3f46dqsy3cijnymhvvvjxjpjktebclo6tn7fixi3a5xm.ipfs.w3s.link/
+ * 
+ * Test:
+ * curl -X POST -F "file=@test.txt" http://localhost:8000/upload
+ * curl http://localhost:8000/retrieve?cid=bafkreig6xv5nwphfmvcnektpnojts33jqcuam7bmye2pb54adnrtccjlsu
  */
 
-import express from 'express';
 import cors from 'cors';
+import express from 'express';
 import multer from 'multer';
 import { paymentMiddleware } from '@x402/express';
 import { x402ResourceServer, HTTPFacilitatorClient } from '@x402/core/server';
@@ -28,7 +33,7 @@ app.use(cors({
 app.use(express.json());
 
 // Configuration
-const RECIPIENT_ADDRESS = process.env.RECIPIENT_ADDRESS || '0x23792579e2979a98d12a33a85e35914079304a56';
+const RECIPIENT_ADDRESS = process.env.RECIPIENT_ADDRESS;
 const FACILITATOR_URL = process.env.FACILITATOR_URL || 'https://x402.org/facilitator';
 
 // Create facilitator client
@@ -106,7 +111,7 @@ const routes = {
     accepts: [
       {
         scheme: 'exact',
-        price: '$0.0005', // Lower price for retrieval
+        price: '$0.00002', // Lower price for retrieval
         network: 'eip155:84532',
         payTo: RECIPIENT_ADDRESS,
       },
@@ -252,7 +257,7 @@ app.get('/health', (req, res) => {
       retrieve: {
         method: 'GET',
         path: '/retrieve',
-        price: '$0.0005',
+        price: '$0.00002',
         discoverable: true,
       },
     },
@@ -268,5 +273,5 @@ app.listen(PORT, () => {
   console.log(`🔍 Bazaar Discovery: ENABLED`);
   console.log(`\n📋 Available endpoints:`);
   console.log(`   POST /upload  - $0.001 per upload`);
-  console.log(`   GET /retrieve - $0.0005 per retrieval`);
+  console.log(`   GET /retrieve - $0.00002 per retrieval`);
 });
