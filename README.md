@@ -13,6 +13,9 @@
 > **Rachax402** = **Storacha** (decentralized storage) + **x402** (payment protocol). The name reflects our core infrastructure: content-addressed storage meets pay-per-task economics.
 
 ---
+<div align="center" >
+<img src="https://github.com/user-attachments/assets/51ba7815-0086-43f2-82d7-d5f318f988c5" width=400 height=300 />
+</div>
 
 ## What it does
 
