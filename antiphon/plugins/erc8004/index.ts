@@ -1,8 +1,3 @@
-/**
- * ERC-8004 Actions - UPDATED with Correct ABIs
- * Uses deployed contracts on Base Sepolia
- */
-
 import { elizaLogger } from "@elizaos/core";
 import type { Address } from "viem";
 import { baseSepolia } from "viem/chains";
@@ -11,24 +6,37 @@ import type { ActionHandlerCallback, ActionHandlerState } from "../../index.js";
 import { AgentIdentityABI } from "../ABI/AgentIdentityABI.js";
 import { AgentReputationABI } from "../ABI/AgentReputationABI.js";
 
-/**
- * Configuration for ERC-8004 contracts
- * These addresses are on Base Sepolia testnet
- */
 export interface ERC8004Config {
-  identityRegistryAddress: string;  // 0x1352abA587fFbbC398d7ecAEA31e2948D3aFE4Fb
-  reputationRegistryAddress: string; // 0x3FdD300147940a35F32AdF6De36b3358DA682B5c
+  identityRegistryAddress: string;
+  reputationRegistryAddress: string;
   rpcUrl: string;
   privateKey: string;
+}
+
+interface ServiceRoute {
+  capability: string;
+  endpointSuffix: string;
+  pricingKey: string;
+}
+
+export function resolveServiceRoute(intent: string): ServiceRoute {
+  const t = intent.toLowerCase();
+
+  if (t.includes('analyz') || t.includes('csv') || t.includes('statistics') || t.includes('data-transform')) {
+    return { capability: 'csv-analysis', endpointSuffix: '/analyze', pricingKey: 'baseRate' };
+  }
+
+  if (t.includes('retrieve') || t.includes('fetch file') || t.includes('get file') || t.includes('download')) {
+    return { capability: 'file-storage', endpointSuffix: '/retrieve', pricingKey: 'retrieve' };
+  }
+
+  return { capability: 'file-storage', endpointSuffix: '/upload', pricingKey: 'upload' };
 }
 
 export function getERC8004Actions(config: ERC8004Config | null) {
   const walletService = config ? new WalletService(config.rpcUrl) : null;
 
   return {
-    /**
-     * Register Agent B on-chain
-     */
     AGENT_REGISTER: {
       name: 'AGENT_REGISTER',
       description: 'Register agent in ERC-8004 AgentIdentityRegistry with capabilities',
@@ -48,10 +56,7 @@ export function getERC8004Actions(config: ERC8004Config | null) {
 
         const agentCardCID = state.data?.agentCardCID as string;
         const capabilities = state.data?.capabilities as string[] || [
-          "DataAnalyzer",
-          "csv-analysis",
-          "statistics",
-          "data-transformation"
+          "DataAnalyzer", "csv-analysis", "statistics", "data-transformation"
         ];
 
         if (!agentCardCID) {
@@ -64,9 +69,7 @@ export function getERC8004Actions(config: ERC8004Config | null) {
           const walletClient = walletService.createWalletClient(config.privateKey);
           const account = walletService.getAccount(config.privateKey);
 
-          await callback?.({
-            text: `Registering agent with capabilities: ${capabilities.join(', ')}...`
-          });
+          await callback?.({ text: `Registering agent with capabilities: ${capabilities.join(', ')}...` });
 
           const hash = await walletClient.writeContract({
             chain: baseSepolia,
@@ -77,15 +80,9 @@ export function getERC8004Actions(config: ERC8004Config | null) {
             account,
           });
 
-          await callback?.({
-            text: `Transaction submitted: ${hash}\nWaiting for confirmation...`
-          });
-
+          await callback?.({ text: `Transaction submitted: ${hash}\nWaiting for confirmation...` });
           const receipt = await publicClient.waitForTransactionReceipt({ hash });
-
-          await callback?.({
-            text: `✅ Agent registered successfully!\nTransaction: ${receipt.transactionHash}\nYou can now be discovered by other agents.`
-          });
+          await callback?.({ text: `Agent registered on-chain. Tx: ${receipt.transactionHash}` });
         } catch (error: unknown) {
           const msg = error instanceof Error ? error.message : String(error);
           elizaLogger.error("ERC-8004 registration error:", error);
@@ -94,14 +91,9 @@ export function getERC8004Actions(config: ERC8004Config | null) {
       },
     },
 
-
-    /**
-     * Discover Agent B by querying the registry
-     * Agent A calls this to find providers
-     */
     AGENT_DISCOVER: {
       name: 'AGENT_DISCOVER',
-      description: 'Find service providers by capability (e.g., csv-analysis)',
+      description: 'Find service providers by capability via ERC-8004 on-chain registry',
       similes: ['discover', 'find', 'search', 'locate'],
       validate: async () => true,
       handler: async (
@@ -116,167 +108,139 @@ export function getERC8004Actions(config: ERC8004Config | null) {
           return;
         }
 
-        // Determine capability tags from user message or state
-        const userMessage = state.recentMessagesData
-          ?.find((m) => m.content?.text)
-          ?.content?.text || '';
+        const userIntent = (state.data?.serviceIntent as string) ||
+          state.recentMessagesData?.find((m) => m.content?.text)?.content?.text || 'csv-analysis';
 
-        let capabilityTags: string[];
-        if (userMessage.includes('csv') || userMessage.includes('analyze')) {
-          capabilityTags = ['csv-analysis', 'DataAnalyzer', 'data-transformation'];
-        } else if (userMessage.includes('store') || userMessage.includes('storage')) {
-          capabilityTags = ['file-storage', 'Storacha', 'ipfs', 'decentralized-storage'];
-        } else {
-          capabilityTags = ['csv-analysis', 'DataAnalyzer', 'data-transformation']; // Default
-        }
+        const route = resolveServiceRoute(userIntent);
 
         try {
           const publicClient = walletService.createPublicClient();
 
-          await callback?.({
-            text: `🔍 Searching for agents with capabilities: ${capabilityTags.join(', ')}...`
-          });
+          await callback?.({ text: `Querying ERC-8004 for capability: ${route.capability}...` });
 
-          // Query the blockchain
-          const result = await publicClient.readContract({
+          const agentAddresses = await publicClient.readContract({
             address: config.identityRegistryAddress as Address,
             abi: AgentIdentityABI,
-            functionName: "discoverAgents",
-            args: [capabilityTags, 0n, 10n], // Get first 10 results
-          });
+            functionName: "getAgentsByCapability",
+            args: [route.capability],
+          }) as Address[];
 
-          const [agentAddresses, totalCount] = result;
+          if (!agentAddresses || agentAddresses.length === 0) {
+            const [discoveredAddrs] = await publicClient.readContract({
+              address: config.identityRegistryAddress as Address,
+              abi: AgentIdentityABI,
+              functionName: "discoverAgents",
+              args: [[route.capability], 0n, 10n],
+            }) as [Address[], bigint];
 
-          if (agentAddresses.length === 0) {
-            await callback?.({
-              text: `❌ No agents found with capabilities: ${capabilityTags.join(', ')}.\n\n` +
-                `Make sure services are registered on-chain.\n`
-            });
-            return;
+            if (!discoveredAddrs || discoveredAddrs.length === 0) {
+              await callback?.({ text: `No agents found for capability: ${route.capability}` });
+              return;
+            }
+            agentAddresses.push(...discoveredAddrs);
           }
 
-          await callback?.({
-            text: `✅ Found ${agentAddresses.length} agent(s) (${totalCount} total).\n⭐ Checking reputation scores...`
-          });
+          await callback?.({ text: `Found ${agentAddresses.length} agent(s). Checking reputation...` });
 
-          // Get details for each agent
           const agentsWithDetails = await Promise.all(
-            agentAddresses.map(async (agentAddress: Address) => {
+            agentAddresses.map(async (addr: Address) => {
               try {
                 const agentCardCID = await publicClient.readContract({
                   address: config.identityRegistryAddress as Address,
                   abi: AgentIdentityABI,
                   functionName: "getAgentCard",
-                  args: [agentAddress],
-                });
+                  args: [addr],
+                }) as string;
 
-                // Get reputation score
-                const [score, totalRatings] = await publicClient.readContract({
-                  address: config.reputationRegistryAddress as Address,
-                  abi: AgentReputationABI,
-                  functionName: "getReputationScore",
-                  args: [agentAddress],
-                });
+                let reputation = 0;
+                let totalRatings = 0;
+                try {
+                  const [score, ratings] = await publicClient.readContract({
+                    address: config.reputationRegistryAddress as Address,
+                    abi: AgentReputationABI,
+                    functionName: "getReputationScore",
+                    args: [addr],
+                  }) as [bigint, bigint];
+                  reputation = Number(score) / 100;
+                  totalRatings = Number(ratings);
+                } catch { /* no ratings yet */ }
 
-                // Score is multiplied by 100 in the contract (480 = 4.8/5)
-                const reputation = Number(score) / 100;
-
-                return {
-                  address: agentAddress,
-                  agentCardCID,
-                  reputation,
-                  totalRatings: Number(totalRatings)
-                };
+                return { address: addr, agentCardCID, reputation, totalRatings };
               } catch (err) {
-                elizaLogger.warn(`Failed to get details for agent ${agentAddress}:`, err);
+                elizaLogger.warn(`Failed to get details for ${addr}:`, err);
                 return null;
               }
             })
           );
 
-          // Filter out failed fetches and sort by reputation
           const validAgents = agentsWithDetails
-            .filter((a: { reputation: number; totalRatings: number; agentCardCID: string; address: Address }) => a !== null)
-            .sort((a: { reputation: number; totalRatings: number; agentCardCID: string; address: Address }, b: { reputation: number; totalRatings: number; agentCardCID: string; address: Address }) => b!.reputation - a!.reputation);
+            .filter(Boolean)
+            .sort((a, b) => b!.reputation - a!.reputation) as NonNullable<typeof agentsWithDetails[number]>[];
 
           if (validAgents.length === 0) {
             await callback?.({ text: "Found agents but couldn't fetch their details." });
             return;
           }
 
-          const topAgent = validAgents[0] as { reputation: number; totalRatings: number; agentCardCID: string; address: Address };
+          const topAgent = validAgents[0];
 
           await callback?.({
-            text: `🏆 Selected top agent:\n` +
-              `• Address: ${topAgent.address.slice(0, 10)}...${topAgent.address.slice(-8)}\n` +
-              `• Reputation: ${topAgent.reputation}/5 ⭐ (${topAgent.totalRatings} ratings)\n` +
-              `• Agent Card: ${topAgent.agentCardCID.slice(0, 15)}...\n\n` +
-              `📡 Fetching service details from IPFS...`
+            text: `Selected agent ${topAgent.address.slice(0, 10)}... (rep: ${topAgent.reputation}/5, ${topAgent.totalRatings} ratings). Fetching service card from IPFS...`
           });
 
-          // fetch the agent card from Storacha
           let providerEndpoint: string;
-          let pricing: any;
-          let agentName: string = "Third Party Service";
+          let providerWallet: string;
+          let price: number;
+          let agentName = "Service Provider";
 
           try {
             const agentCardResponse = await fetch(`https://w3s.link/ipfs/${topAgent.agentCardCID}`);
-
-            if (!agentCardResponse.ok) {
-              throw new Error(`HTTP ${agentCardResponse.status}: ${agentCardResponse.statusText}`);
-            }
-
+            if (!agentCardResponse.ok) throw new Error(`HTTP ${agentCardResponse.status}`);
             const agentCard = await agentCardResponse.json();
-            providerEndpoint = agentCard.endpoint;
-            pricing = agentCard.pricing;
-            agentName = agentCard.name || "Third Party Service";
+
+            const baseUrl = (agentCard.endpoint as string).replace(/\/(upload|analyze|retrieve)$/, '');
+            providerEndpoint = `${baseUrl}${route.endpointSuffix}`;
+            providerWallet = agentCard.walletAddress || topAgent.address;
+            price = agentCard.pricing?.[route.pricingKey] ?? agentCard.pricing?.baseRate ?? 0.0001;
+            agentName = agentCard.name || agentName;
 
             await callback?.({
-              text: `✅ Service details retrieved:\n` +
-                `• Service: ${agentName}\n` +
-                `• Endpoint: ${providerEndpoint}\n` +
-                `• Price: ${pricing.baseRate || pricing.upload} ${pricing.currency}\n` +
-                `• Network: ${pricing.network}`
+              text: `Service: ${agentName}\nEndpoint: ${providerEndpoint}\nPrice: $${price} USDC\nPays to: ${providerWallet}`
             });
           } catch (error: unknown) {
             const msg = error instanceof Error ? error.message : String(error);
-            elizaLogger.warn(`Failed to fetch agent card from Storacha: ${msg}`);
+            elizaLogger.warn(`Agent card fetch failed: ${msg}`);
 
-            // Fallback to known endpoints if fetch fails
-            providerEndpoint = capabilityTags.includes('DataAnalyzer')
-              ? "http://localhost:8001/analyze"
-              : "http://localhost:8000/upload";
+            providerEndpoint = route.capability === 'csv-analysis'
+              ? `http://localhost:8001${route.endpointSuffix}`
+              : `http://localhost:8000${route.endpointSuffix}`;
+            providerWallet = topAgent.address;
+            price = route.pricingKey === 'baseRate' ? 0.0001 : route.pricingKey === 'upload' ? 0.001 : 0.00002;
 
-            await callback?.({
-              text: `⚠️  Agent card fetch failed. Using fallback endpoint: ${providerEndpoint}\n` +
-                `Error: ${msg}`
-            });
+            await callback?.({ text: `Agent card fetch failed. Using fallback: ${providerEndpoint}` });
           }
 
+          const x402Capability = route.endpointSuffix === '/retrieve' ? 'file-retrieval' : route.capability;
           state.data = {
             ...(state.data || {}),
             selectedAgent: topAgent,
             providerEndpoint,
-            pricing,
-            agentName
+            providerWallet,
+            price,
+            capability: x402Capability,
+            agentName,
           };
 
-          await callback?.({
-            text: `🚀 Ready to send task to: ${providerEndpoint}`
-          });
+          await callback?.({ text: `Ready to send task to: ${providerEndpoint}` });
 
         } catch (error: unknown) {
           const msg = error instanceof Error ? error.message : String(error);
           elizaLogger.error("ERC-8004 discovery error:", error);
-          await callback?.({ text: `❌ Discovery failed: ${msg}` });
+          await callback?.({ text: `Discovery failed: ${msg}` });
         }
       },
     },
 
-    /**
-     * Post reputation feedback after task completion
-     * Agent A calls this after receiving results
-     */
     REPUTATION_POST: {
       name: 'REPUTATION_POST',
       description: 'Post reputation feedback after task completion',
@@ -294,18 +258,25 @@ export function getERC8004Actions(config: ERC8004Config | null) {
           return;
         }
 
-        const targetAgent = state.data?.selectedAgent?.address as string;
-        const rating = (state.data?.rating as number) || 5;
-        const comment = (state.data?.comment as string) || "Excellent service";
-        const proofCID = (state.data?.resultCID as string) || "";
+        const providerAddr = (state.data?.providerWallet as string) || (state.data?.selectedAgent?.address as string);
+        const resultCID = (state.data?.resultCID as string) || "";
+        const capability = (state.data?.capability as string) || "";
 
-        if (!targetAgent) {
-          await callback?.({ text: "No agent specified for feedback." });
+        if (!providerAddr) {
+          await callback?.({ text: "No provider address for feedback. Run AGENT_DISCOVER first." });
           return;
         }
 
+        const commentMap: Record<string, string> = {
+          'csv-analysis': `Analysis #${Date.now()} —Accurate statistical analysis, fast delivery.`,
+          'file-storage': `Storacha Upload #${Date.now()} — Reliable IPFS storage, instant CID returned.`,
+          'file-retrieval': `Storacha Retrieval #${Date.now()} — Instant retrieval, content integrity confirmed.`,
+        };
+        const rating = (state.data?.rating as number) || 5;
+        const comment = (state.data?.comment as string) || commentMap[capability] || 'Service completed successfully.';
+
         if (rating < 1 || rating > 5) {
-          await callback?.({ text: "Rating must be between 1 and 5 stars." });
+          await callback?.({ text: "Rating must be between 1 and 5." });
           return;
         }
 
@@ -314,29 +285,41 @@ export function getERC8004Actions(config: ERC8004Config | null) {
           const walletClient = walletService.createWalletClient(config.privateKey);
           const account = walletService.getAccount(config.privateKey);
 
-          await callback?.({
-            text: `⭐ Posting ${rating}/5 star rating for agent ${targetAgent.slice(0, 10)}...`
-          });
+          // Check rate limit before attempting to post
+          const [allowed, nextAllowedTime] = await publicClient.readContract({
+            address: config.reputationRegistryAddress as Address,
+            abi: AgentReputationABI,
+            functionName: 'canRate',
+            args: [account.address, providerAddr as Address],
+          }) as [boolean, bigint];
+
+          if (!allowed) {
+            const cooldownEnd = new Date(Number(nextAllowedTime) * 1000).toLocaleString();
+            await callback?.({
+              text: `⏭️ Reputation skipped — rate limit active until ${cooldownEnd}. Task still succeeded.`
+            });
+            return; // soft-skip, not an error
+          }
+
+          await callback?.({ text: `Submitting ${rating}/5 rating for ${providerAddr.slice(0, 10)}...` });
 
           const hash = await walletClient.writeContract({
             chain: baseSepolia,
             address: config.reputationRegistryAddress as Address,
             abi: AgentReputationABI,
             functionName: "postReputation",
-            args: [targetAgent as Address, rating, comment, proofCID],
+            args: [providerAddr as Address, rating, comment, resultCID],
             account,
           });
 
-          await callback?.({ text: `📝 Reputation submitted: ${hash}` });
-
+          await callback?.({ text: `Reputation tx submitted: ${hash}` });
           const receipt = await publicClient.waitForTransactionReceipt({ hash });
 
           await callback?.({
-            text: `✅ Feedback posted on-chain!\n` +
-              `• Rating: ${rating}/5 ⭐\n` +
-              `• Comment: "${comment}"\n` +
-              `• Transaction: ${receipt.transactionHash}`
+            text: `Reputation posted on-chain.\nProvider: ${providerAddr}\nRating: ${rating}/5\nTx: ${receipt.transactionHash}`
           });
+
+          state.data = { ...(state.data || {}), reputationTxHash: receipt.transactionHash };
         } catch (error: unknown) {
           const msg = error instanceof Error ? error.message : String(error);
           elizaLogger.error("Reputation post error:", error);
@@ -345,9 +328,6 @@ export function getERC8004Actions(config: ERC8004Config | null) {
       },
     },
 
-    /**
-     * Query reputation before selecting an agent
-     */
     REPUTATION_QUERY: {
       name: 'REPUTATION_QUERY',
       description: 'Check agent reputation scores and recent ratings',
@@ -365,7 +345,7 @@ export function getERC8004Actions(config: ERC8004Config | null) {
           return;
         }
 
-        const agentAddress = state.data?.selectedAgent?.address as string;
+        const agentAddress = (state.data?.providerWallet as string) || (state.data?.selectedAgent?.address as string);
         if (!agentAddress) {
           await callback?.({ text: "No agent address specified." });
           return;
@@ -379,7 +359,7 @@ export function getERC8004Actions(config: ERC8004Config | null) {
             abi: AgentReputationABI,
             functionName: "getReputationScore",
             args: [agentAddress as Address],
-          });
+          }) as [bigint, bigint];
 
           const reputation = Number(score) / 100;
 
@@ -388,23 +368,20 @@ export function getERC8004Actions(config: ERC8004Config | null) {
             abi: AgentReputationABI,
             functionName: "getRecentRatings",
             args: [agentAddress as Address, 5n],
-          });
+          }) as Array<{ rating: number; comment: string; timestamp: bigint }>;
 
-          let feedbackText = `⭐ Reputation for ${agentAddress.slice(0, 10)}...${agentAddress.slice(-8)}:\n`;
-          feedbackText += `• Score: ${reputation}/5 ⭐ (${totalRatings} ratings)\n\n`;
+          let feedbackText = `Reputation for ${agentAddress.slice(0, 10)}...${agentAddress.slice(-8)}:\n`;
+          feedbackText += `Score: ${reputation}/5 (${totalRatings} ratings)\n`;
 
           if (recentRatings.length > 0) {
-            feedbackText += `📋 Recent Feedback:\n`;
-            recentRatings.forEach((rating, i) => {
-              const date = new Date(Number(rating.timestamp) * 1000).toLocaleDateString();
-              feedbackText += `${i + 1}. ${rating.rating}/5 - "${rating.comment}" (${date})\n`;
+            feedbackText += `\nRecent:\n`;
+            recentRatings.forEach((r, i) => {
+              const date = new Date(Number(r.timestamp) * 1000).toLocaleDateString();
+              feedbackText += `${i + 1}. ${r.rating}/5 - "${r.comment}" (${date})\n`;
             });
-          } else {
-            feedbackText += `No ratings yet.`;
           }
 
           await callback?.({ text: feedbackText });
-
         } catch (error: unknown) {
           const msg = error instanceof Error ? error.message : String(error);
           elizaLogger.error("Reputation query error:", error);

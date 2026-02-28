@@ -8,7 +8,7 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178C6?logo=typescript)](https://www.typescriptlang.org/)
 [![License](https://img.shields.io/badge/License-ISC-yellow)](./LICENSE)
 
-**A decentralized Agent co-ordination system integrating ERC-8004 (on-chain identity/reputation), x402 (payment protocol), and Storacha (decentralized storage) for agent-to-agent service discovery and payment-gated task execution.**
+**(A decentralized Agent co-ordination system integrating ERC-8004 (on-chain identity/reputation), x402 (payment protocol), and Storacha (decentralized storage) for agent-to-agent service discovery and payment-gated task execution).**
 
 > **Rachax402** = **Storacha** (decentralized storage) + **x402** (payment protocol). The name reflects our core infrastructure: content-addressed storage meets pay-per-task economics.
 
@@ -16,12 +16,20 @@
 
 ## What it does
 
-- A *Task Requester* agent finds capable *Service Provider* agents on-chain (ERC-8004), pays them in USDC (x402), and exchanges data via content-addressed storage (Storacha). 
-Reputation lives on-chain; receipts and attestations live in IPFS. 
-> Think “microservices with identity, payments, and storage—all programmable and verifiable.”
+Rachax402 is a **decentralized Agent-to-Agent coordination marketplace** where:
 
+- **AgentA (ElizaOS DataRequester)** — the orchestrator. Talks to users, discovers services on-chain, pays autonomously via x402, and returns results.
+- **AgentB** — not a single agent but two independent on-chain identities (same operator, different wallets) providing two services:
+  - **Data Analyzer** running on `:8001` — CSV statistical analysis
+  - **Storacha Storage** running on `:8000` — IPFS file upload & retrieval
+- **ERC-8004 AgentIdentityRegistry** — on-chain service discovery. AgentA queries this to find *who* provides a capability and *where* to call them.
+- **ERC-8004 AgentReputationRegistry** — on-chain reputation. AgentA posts ratings here after every successful task, for all three service types.
+- **x402** — HTTP payment protocol. AgentB servers return `402 Payment Required`; AgentA signs EIP-712 payments with its own wallet and retries.
+- **Storacha** — decentralized IPFS storage. Used for: uploading input data before analysis, storing results after analysis, and as the direct storage service for upload/retrieve tasks.
 
-- `Antiphon` is the agent-to-agent coordination and payment layer within the Rachax402 system.
+---
+
+-  `Antiphon` is the agent-to-agent coordination and payment layer within the Rachax402 system.
 
 > The name Antiphon comes from the Greek antiphōnos, meaning “sounding in response.” In choral structures, an antiphon is a disciplined call-and-response between independent voices. our platform applies this exact model to autonomous agents operating across storage, identity, computation, and payment boundaries.
 

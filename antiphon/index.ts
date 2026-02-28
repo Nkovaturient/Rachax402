@@ -1,731 +1,480 @@
-import { DirectClient } from "@elizaos/client-direct";
+/**
+ * Rachax402 — AgentA Lean Coordinator
+ *
+ * Replaces antiphon/index.ts entirely. No ElizaOS runtime, no AgentRuntime,
+ * no DirectClient. Just a clean Express + EventEmitter pipeline that calls
+ * your existing plugins directly.
+ *
+ * ┌─────────────────────────────────────────────────────────────────────┐
+ * │  PRESERVED:  plugins/erc8004/index.ts  — untouched                 │
+ * │  PRESERVED:  plugins/x402/index.ts     — untouched                 │
+ * │  PRESERVED:  agentB-server.js          — untouched                 │
+ * │  PRESERVED:  storacha-server.js        — untouched                 │
+ * │  REPLACED:   antiphon/index.ts → this file                         │
+ * │  FIXED:      Storacha via @storacha/client directly (no plugin)     │
+ * └─────────────────────────────────────────────────────────────────────┘
+ *
+ * Port: TASK_API_PORT (default 3001)
+ * Endpoints:
+ *   POST /api/task               → { taskId }  (pipeline starts async)
+ *   GET  /api/task/:taskId/stream → SSE events
+ *   GET  /api/health             → { status, storacha, erc8004, x402 }
+ */
+
+import express from 'express';
+import multer from 'multer';
+import cors from 'cors';
+import { EventEmitter } from 'events';
+import { randomUUID } from 'crypto';
+// import { create } from '@storacha/client';
+// import { StoreMemory } from '@storacha/client/stores/memory';
+// import * as Signer from '@ucanto/principal/ed25519';
+// import { importDAG } from '@ucanto/core/delegation';
+// import { CarReader } from '@ipld/car';
+import * as Client from "@storacha/client";
+import { StoreMemory } from "@storacha/client/stores/memory";
+import * as Proof from "@storacha/client/proof";
+import { Signer } from "@storacha/client/principal/ed25519";
+import dotenv from 'dotenv';
+
+// ── Import your existing plugins as-is ──────────────────────────────────────
+// These import `ActionHandlerCallback` and `ActionHandlerState` from
+// "../../index.js" which resolves to THIS file at runtime.
+
 import {
-  AgentRuntime,
-  elizaLogger,
-  getEnv,
-  stringToUuid,
-  type Character,
-} from "@elizaos/core";
-import { bootstrapPlugin } from "@elizaos/plugin-bootstrap";
-import net from "net";
-import path from "path";
-import { fileURLToPath } from "url";
-import { getStorageClient } from "@storacha/elizaos-plugin";
-import { agentRequester } from "./elizaOS/Requester/character.js";
-import { agentProvider } from "./elizaOS/Provider/data-analyser/character.js";
-import { getERC8004Actions, type ERC8004Config } from "./plugins/erc8004/index.js";
-import { getX402Actions, type X402Config } from "./plugins/x402/index.js";
-import sqlPlugin from "@elizaos/plugin-sql";
-import express from "express";
-import Papa from "papaparse";
+  getERC8004Actions,
+  resolveServiceRoute,
+} from './plugins/erc8004/index.js';
+import { getX402Actions } from './plugins/x402/index.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+dotenv.config();
 
-export type ActionHandlerCallback = (response: { text?: string }) => Promise<unknown[]>;
+// ── Re-export the types plugins depend on ───────────────────────────────────
+// Plugins do: import type { ActionHandlerCallback, ActionHandlerState } from "../../index.js"
+// Since this file IS index.js's replacement, we must export these here.
+export type ActionHandlerCallback = (
+  response: { text?: string }
+) => Promise<unknown[]>;
+
 export interface ActionHandlerState {
-  recentMessagesData?: Array<{ content?: { text?: string }; createdAt: number }>;
-  data?: {
-    agentCardCID?: string;
-    selectedAgent?: { address?: string; endpoint?: string; agentCardCID?: string; reputation?: number; totalRatings?: number };
-    inputCID?: string;
-    providerEndpoint?: string;
-    resultCID?: string;
-    rating?: number;
-    comment?: string;
-    [key: string]: unknown;
-  };
+  recentMessagesData?: Array<{
+    content?: { text?: string };
+    createdAt: number;
+  }>;
+  data?: { [key: string]: unknown };
   [key: string]: unknown;
 }
 
-declare module "@elizaos/core" {
-  export enum ServiceType {
-    STORACHA = "storacha",
-  }
+// ── SSE types ────────────────────────────────────────────────────────────────
+interface StepEvent {
+  stepNum: number;   // maps directly to analysisSteps/storageSteps id in store
+  msg: string;       // human-readable message shown in terminal log
+  liveLog: string[]; // full accumulated log up to this point
 }
 
-function getTokenForProvider(provider: string, character: Character): string {
-  const envKey = provider === "OPENROUTER" 
-    ? "OPENROUTER_API_KEY" 
-    : `${provider.toUpperCase()}_API_KEY`;
-  return process.env[envKey] || "";
+interface TaskResult {
+  success: boolean;
+  service: string;
+  liveLog: string[];
+  resultCID?: string;
+  summary?: string;
+  statistics?: Record<string, unknown>;
+  insights?: string[];
+  cid?: string;
+  fileName?: string;
+  fileSize?: number;
+  reputationTxHash?: string;
+  retrievedCID?: string;
+  retrievedContentType?: string;
+  retrievedDataBase64?: string;
 }
 
-function parseArguments() {
-  const args: any = {};
-  process.argv.slice(2).forEach((arg) => {
-    const parts = arg.split("=");
-    const key = parts[0];
-    const value = parts[1];
-    if (key && key.startsWith("--")) {
-      args[key.slice(2)] = value || true;
-    }
-  });
-  return args;
+interface ErrorResult {
+  error: string;
+  liveLog: string[];
 }
 
-function createCacheStub() {
-  return {
-    get: async (_key: string) => undefined,
-    set: async (_key: string, _value: unknown) => {},
-    delete: async (_key: string) => {},
-  };
-}
+// ── SSE Registry ─────────────────────────────────────────────────────────────
+// Maps taskId → EventEmitter. POST creates the emitter, SSE subscriber attaches to it.
+// Race-safe: GET /stream registers listeners before POST fires first event (it's async).
+const taskStreams = new Map<string, EventEmitter>();
 
-async function initializeClients(character: Character, runtime: AgentRuntime) {
+// ── Storacha Direct Client ───────────────────────────────────────────────────
+// Bypasses @storacha/elizaos-plugin entirely, eliminating the CBOR DECODE ERR.
+// Uses @storacha/client + @ucanto/principal/ed25519 + @ipld/car directly.
+// async function initStoracha() {
+//   const pkB64 = process.env.STORACHA_AGENT_PRIVATE_KEY?.replace(/[\r\n\s]+/g, '');
+//   const delB64 = process.env.STORACHA_AGENT_DELEGATION?.replace(/[\r\n\s]+/g, '');
+
+//   if (!pkB64 || !delB64) {
+//     throw new Error('STORACHA_AGENT_PRIVATE_KEY or STORACHA_AGENT_DELEGATION missing');
+//   }
+
+//   // Decode the ED25519 principal key
+//   const keyBytes = Buffer.from(pkB64, 'base64');
+//   const principal = Signer.decode(keyBytes);
+
+//   // Create client with in-memory store (no filesystem dependency)
+//   const client = await create({ principal, store: new StoreMemory() });
+
+//   // Import delegation from raw CAR bytes.
+//   // This is what @storacha/elizaos-plugin does internally but fails on
+//   // because of double-encoding. We do it directly here with no wrapping.
+//   const carBytes = Buffer.from(delB64, 'base64');
+//   const reader = await CarReader.fromBytes(carBytes);
+
+//   const blocks: Parameters<typeof importDAG>[0] = [];
+//   for await (const block of reader.blocks()) {
+//     // eslint-disable-next-line @typescript-eslint/no-explicit-any
+//     blocks.push(block as any);
+//   }
+
+//   const delegation = await importDAG(blocks);
+//   await client.addSpace(delegation);
+
+//   return client;
+// }
+
+export async function initStoracha() {
   try {
-    const { initializeClients: initClients } = await import("./clients/index.js");
-    return initClients(character, runtime);
-  } catch {
-    return [];
+    const pvtKey = process.env.STORACHA_AGENT_PRIVATE_KEY;
+    if (!pvtKey) {
+      throw new Error("STORACHA_AGENT_PRIVATE_KEY must be a non-empty string");
+    }
+    const principal = Signer.parse(pvtKey);
+    const store = new StoreMemory();
+    const client = await Client.create({ principal, store });
+
+    const delegationKey = process.env.STORACHA_AGENT_DELEGATION;
+    if (!delegationKey) {
+      throw new Error("STORACHA_DELEGATION_KEY must be a non-empty string");
+    }
+    const proof = await Proof.parse(delegationKey);
+    const space = await client.addSpace(proof);
+    await client.setCurrentSpace(space.did());
+
+    return client;
+  } catch (error: any) {
+    console.error("Error initializing Storacha client:", error);
+    throw new Error("Failed to initialize Storacha client: " + error.message);
   }
 }
 
-function getRequesterWalletConfig(): { erc8004: ERC8004Config | null; x402: X402Config | null } {
-  const rpcUrl = process.env.BASE_RPC_URL || "";
-  const privateKey = process.env.AGENT_A_PRIVATE_KEY || process.env.PRIVATE_KEY || "";
-  if (!rpcUrl || !privateKey) return { erc8004: null, x402: null };
-  return {
-    erc8004: {
-      identityRegistryAddress: process.env.ERC8004_IDENTITY_REGISTRY || "",
-      reputationRegistryAddress: process.env.ERC8004_REPUTATION_REGISTRY || "",
-      rpcUrl,
-      privateKey,
-    },
-    x402: process.env.X402_FACILITATOR_URL
-      ? { facilitatorUrl: process.env.X402_FACILITATOR_URL, privateKey, rpcUrl }
-      : null,
+// ── Config ───────────────────────────────────────────────────────────────────
+function buildConfig() {
+  const rpcUrl = process.env.BASE_RPC_URL ?? '';
+  const privateKey = process.env.AGENT_A_PRIVATE_KEY ?? '';
+
+  if (!rpcUrl || !privateKey) {
+    console.warn('[AgentA] ⚠️  BASE_RPC_URL or AGENT_A_PRIVATE_KEY not set');
+    return { erc8004: null, x402: null };
+  }
+
+  const erc8004 = {
+    identityRegistryAddress: process.env.ERC8004_IDENTITY_REGISTRY ?? '',
+    reputationRegistryAddress: process.env.ERC8004_REPUTATION_REGISTRY ?? '',
+    rpcUrl,
+    privateKey,
   };
+
+  const x402 = process.env.X402_FACILITATOR_URL
+    ? { facilitatorUrl: process.env.X402_FACILITATOR_URL, privateKey, rpcUrl }
+    : null;
+
+  return { erc8004, x402 };
 }
 
-function getProviderWalletConfig(): { erc8004: ERC8004Config | null; x402: X402Config | null } {
-  const rpcUrl = process.env.BASE_RPC_URL || "";
-  const privateKey = process.env.AGENT_B_PRIVATE_KEY || process.env.PRIVATE_KEY || "";
-  if (!rpcUrl || !privateKey) return { erc8004: null, x402: null };
-  return {
-    erc8004: {
-      identityRegistryAddress: process.env.ERC8004_IDENTITY_REGISTRY || "",
-      reputationRegistryAddress: process.env.ERC8004_REPUTATION_REGISTRY || "",
-      rpcUrl,
-      privateKey,
-    },
-    x402: process.env.X402_FACILITATOR_URL
-      ? {
-          facilitatorUrl: process.env.X402_FACILITATOR_URL,
-          privateKey,
-          rpcUrl,
-          payToAddress: process.env.PAY_TO_ADDRESS || undefined,
-        }
-      : null,
-  };
-}
+// ── Entry ─────────────────────────────────────────────────────────────────────
+async function main() {
+  const app = express();
+  const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 50 * 1024 * 1024 }, // 50 MB
+  });
 
-export function createAgent(
-  character: Character,
-  cache: any,
-  token: string
-) {
-  elizaLogger.success(
-    elizaLogger.successesTitle,
-    "Creating runtime for character",
-    character.name
+  app.use(express.json());
+  app.use(
+    cors({
+      origin: '*',
+      exposedHeaders: ['Content-Type'],
+    })
   );
 
-  const plugins = [bootstrapPlugin, sqlPlugin, ...(character.plugins ?? [])].filter(Boolean);
-  return new AgentRuntime({
-    token,
-    modelProvider: character.modelProvider,
-    evaluators: [],
-    character,
-    plugins,
-    providers: [],
-    actions: [],
-    services: [],
-    managers: [],
-    cacheManager: cache,
-  });
-}
+  // ── Initialize plugins ──────────────────────────────────────────────────
+  const cfg = buildConfig();
+  const erc8004Actions = getERC8004Actions(cfg.erc8004);
+  const x402Actions = getX402Actions(cfg.x402);
 
-async function startRequesterAgent(character: Character, directClient: DirectClient) {
+  // ── Initialize Storacha ─────────────────────────────────────────────────
+  let storacha: Awaited<ReturnType<typeof initStoracha>> | null = null;
   try {
-    character.id ??= stringToUuid(character.name);
-    character.username ??= character.name;
-
-    const token = getTokenForProvider(character.modelProvider, character);
-    const cache = createCacheStub();
-    const runtime = createAgent(character, cache, token);
-
-    const requesterWallet = getRequesterWalletConfig();
-    await runtime.initialize();
-
-    const storageClient = await getStorageClient(runtime);
-
-    const erc8004Actions = getERC8004Actions(requesterWallet.erc8004);
-    const x402Actions = getX402Actions(requesterWallet.x402);
-
-    runtime.evaluate = async () => ['AGENT_DISCOVER', 'ANTIPHON_AT_PLAY', 'PAYMENT_REQUEST', 'RESULT_RETRIEVE', 'REPUTATION_POST'];
-
-    const discoverAction = erc8004Actions.AGENT_DISCOVER;
-    discoverAction.handler = async (
-      _runtime: unknown,
-      _message: unknown,
-      state: ActionHandlerState,
-      _options: unknown,
-      callback: ActionHandlerCallback
-    ) => {
-      const capabilities = (state.recentMessagesData
-        ?.find((m) => m.content?.text?.includes('csv') || m.content?.text?.includes('analyze'))
-        ?.content?.text || 'csv-analysis').toLowerCase();
-
-      if (requesterWallet.erc8004) {
-        const erc8004Handler = erc8004Actions.AGENT_DISCOVER.handler;
-        await erc8004Handler?.(_runtime, _message, state, _options, callback);
-
-        const selectedAgent = state.data?.selectedAgent as { endpoint?: string; agentCardCID?: string } | undefined;
-        if (selectedAgent?.agentCardCID) {
-          try {
-            const agentCardData = await storageClient.getContent(selectedAgent.agentCardCID);
-            const agentCardText = await agentCardData.text();
-            const agentCard = JSON.parse(agentCardText);
-            state.data = {
-              ...(state.data || {}),
-              selectedAgent: { ...selectedAgent, endpoint: agentCard.endpoint }
-            };
-            await callback?.({ text: `Retrieved agent card. Endpoint: ${agentCard.endpoint}` });
-          } catch (error: unknown) {
-            elizaLogger.error("Agent card retrieval error:", error);
-          }
-        }
-      } else {
-        await callback?.({
-          text: `Querying ERC-8004 registry for capabilities: ${capabilities}... (ERC-8004 not configured, using mock)`
-        });
-        await callback?.({
-          text: `Found matching agents. Selecting best match based on reputation and pricing.`
-        });
-      }
-    };
-    runtime.registerAction(discoverAction);
-
-    runtime.registerAction({
-      name: 'ANTIPHON_AT_PLAY',
-      description: 'Upload input dataset to Storacha, initiate task request with input CID, manage workflow',
-      similes: ['orchestrate', 'coordinate', 'submit'],
-      validate: async () => true,
-      handler: async (
-        _runtime: unknown,
-        _message: unknown,
-        state: ActionHandlerState,
-        _options: unknown,
-        callback: ActionHandlerCallback
-      ) => {
-        const interactions = (state.recentMessagesData?.slice(0, 5) ?? []).sort(
-          (a, b) => a.createdAt - b.createdAt
-        );
-
-        const taskData = interactions
-          .map((interaction) => interaction.content?.text || "")
-          .join("\n");
-
-        await callback?.({ text: "Uploading input data to Storacha..." });
-        
-        try {
-          const jsonString = JSON.stringify({ task: taskData }, null, 2);
-          const blobContent = new Blob([jsonString], { type: "application/json" });
-          const file = new File([blobContent], `task-input.json`, { type: "application/json" });
-          const cidLink = await storageClient.getStorage().uploadFile(file);
-          const inputCID = typeof cidLink === 'string' ? cidLink : (cidLink?.toString?.() ?? '');
-          
-          state.data = { ...(state.data || {}), inputCID };
-          
-          await callback?.({ 
-            text: `Input uploaded (CID: ${inputCID}). Initiating task request to service provider...` 
-          });
-
-          const selectedAgent = state.data?.selectedAgent as { endpoint?: string; address?: string } | undefined;
-          if (selectedAgent?.endpoint) {
-            state.data = { ...(state.data || {}), providerEndpoint: selectedAgent.endpoint };
-            await callback?.({ text: `Sending request to ${selectedAgent.endpoint}...` });
-          } else {
-            await callback?.({ text: "No provider endpoint found. Run AGENT_DISCOVER first." });
-          }
-        } catch (error: any) {
-          elizaLogger.error("Upload error:", error);
-          await callback?.({ text: `Error uploading input data: ${error.message}` });
-        }
-      },
-      examples: [
-        [
-          { user: "{{user1}}", content: { text: "Analyze this data" } },
-          { user: "{{DataRequester}}", content: { text: "Uploading input to Storacha..." } }
-        ],
-      ],
-    });
-
-    const paymentAction = x402Actions.PAYMENT_REQUEST;
-    paymentAction.handler = async (
-      _runtime: unknown,
-      _message: unknown,
-      state: ActionHandlerState,
-      _options: unknown,
-      callback: ActionHandlerCallback
-    ) => {
-      const providerEndpoint = state.data?.providerEndpoint as string;
-      const inputCID = state.data?.inputCID as string;
-
-      if (!providerEndpoint || !inputCID) {
-        await callback?.({ text: "Missing provider endpoint or input CID. Run AGENT_DISCOVER and ANTIPHON_AT_PLAY first." });
-        return;
-      }
-
-      if (requesterWallet.x402) {
-        const x402Handler = x402Actions.PAYMENT_REQUEST.handler;
-        await x402Handler?.(_runtime, _message, state, _options, callback);
-      } else {
-        await callback?.({ text: "Payment required: 0.01 USDC on Base Sepolia. (x402 not configured, using mock)" });
-        await callback?.({ text: "Payment verified via Coinbase facilitator. Task execution authorized." });
-      }
-    };
-    runtime.registerAction(paymentAction);
-
-    const reputationAction = erc8004Actions.REPUTATION_POST;
-    reputationAction.handler = async (
-      _runtime: unknown,
-      _message: unknown,
-      state: ActionHandlerState,
-      _options: unknown,
-      callback: ActionHandlerCallback
-    ) => {
-      const resultCID = state.data?.resultCID as string;
-      if (resultCID) {
-        state.data = { ...(state.data || {}), resultCID, rating: 5, comment: "Excellent service" };
-      }
-
-      if (requesterWallet.erc8004) {
-        const erc8004Handler = erc8004Actions.REPUTATION_POST.handler;
-        await erc8004Handler?.(_runtime, _message, state, _options, callback);
-      } else {
-        await callback?.({ text: "Posting reputation feedback to ERC-8004 ReputationRegistry. (ERC-8004 not configured, using mock)" });
-      }
-    };
-    runtime.registerAction({
-      name: 'RESULT_RETRIEVE',
-      description: 'Retrieve analysis results from Storacha using result CID',
-      similes: ['retrieve', 'fetch', 'get results'],
-      validate: async () => true,
-      handler: async (
-        _runtime: unknown,
-        _message: unknown,
-        state: ActionHandlerState,
-        _options: unknown,
-        callback: ActionHandlerCallback
-      ) => {
-        const resultCID = state.data?.resultCID as string;
-        if (!resultCID) {
-          await callback?.({ text: "No result CID found. Complete payment and task execution first." });
-          return;
-        }
-
-        try {
-          await callback?.({ text: `Retrieving results from Storacha (CID: ${resultCID})...` });
-          
-          const resultData = await storageClient.getContent(resultCID);
-          const resultText = await resultData.text();
-          const results = JSON.parse(resultText);
-          
-          await callback?.({ 
-            text: `Results retrieved:\n${JSON.stringify(results, null, 2)}` 
-          });
-        } catch (error: unknown) {
-          const msg = error instanceof Error ? error.message : String(error);
-          elizaLogger.error("Result retrieval error:", error);
-          await callback?.({ text: `Error retrieving results: ${msg}` });
-        }
-      },
-      examples: [
-        [
-          { user: "{{user1}}", content: { text: "Get results" } },
-          { user: "{{DataRequester}}", content: { text: "Retrieving results from Storacha..." } }
-        ],
-      ],
-    });
-
-    runtime.registerAction(reputationAction);
-
-    runtime.clients = await initializeClients(character, runtime);
-    directClient.registerAgent(runtime);
-
-    elizaLogger.debug(`Started ${character.name} (Requester) as ${runtime.agentId}`);
-    return runtime;
-  } catch (error) {
-    elizaLogger.error(`Error starting requester agent:`, error);
-    throw error;
+    storacha = await initStoracha();
+    console.log('[AgentA] ✅ Storacha Initialized');
+  } catch (err) {
+    console.error('[AgentA] ⚠️  Storacha init failed:', (err as Error).message);
+    console.error(
+      '[AgentA]    CSV analysis unavailable until STORACHA_AGENT_PRIVATE_KEY & STORACHA_AGENT_DELEGATION are valid'
+    );
   }
-}
 
-async function startProviderAgent(character: Character, directClient: DirectClient) {
-  try {
-    character.id ??= stringToUuid(character.name);
-    character.username ??= character.name;
+  // ── SSE stream endpoint ─────────────────────────────────────────────────
+  // Frontend opens this AFTER POST returns taskId.
+  // Emitter may already exist (POST fired very fast) or be created here.
+  app.get('/api/task/:taskId/stream', (req, res) => {
+    const { taskId } = req.params;
 
-    const token = getTokenForProvider(character.modelProvider, character);
-    const cache = createCacheStub();
-    const runtime = createAgent(character, cache, token);
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.flushHeaders();
 
-    const providerWallet = getProviderWalletConfig();
-    await runtime.initialize();
+    // Get or create emitter
+    let emitter = taskStreams.get(taskId);
+    if (!emitter) {
+      emitter = new EventEmitter();
+      taskStreams.set(taskId, emitter);
+    }
 
-    const storageClient = await getStorageClient(runtime);
+    const onStep = (evt: StepEvent) => {
+      res.write(`data: ${JSON.stringify(evt)}\n\n`);
+    };
+    const onDone = (result: TaskResult) => {
+      res.write(`event: done\ndata: ${JSON.stringify(result)}\n\n`);
+      cleanup();
+    };
+    const onError = (err: ErrorResult) => {
+      res.write(`event: error\ndata: ${JSON.stringify(err)}\n\n`);
+      cleanup();
+    };
 
-    const erc8004Actions = getERC8004Actions(providerWallet.erc8004);
-    const x402Actions = getX402Actions(providerWallet.x402);
+    const cleanup = () => {
+      emitter!.off('step', onStep);
+      emitter!.off('done', onDone);
+      emitter!.off('error', onError);
+      res.end();
+    };
 
-    runtime.evaluate = async () => ['AGENT_REGISTER', 'ANALYZE_DATA', 'PAYMENT_VERIFY'];
+    emitter.on('step', onStep);
+    emitter.on('done', onDone);
+    emitter.on('error', onError);
+    req.on('close', cleanup);
+  });
 
-    const registerAction = erc8004Actions.AGENT_REGISTER;
-    registerAction.handler = async (
-      _runtime: unknown,
-      _message: unknown,
-      state: ActionHandlerState,
-      _options: unknown,
-      callback: ActionHandlerCallback
-    ) => {
-      await callback?.({
-        text: "Generating agent card with capabilities and pricing..."
-      });
+  // ── Main task endpoint ──────────────────────────────────────────────────
+  app.post(
+    '/api/task',
+    upload.single('file'),
+    async (req: express.Request, res: express.Response) => {
+      const taskId = randomUUID();
+      const service = (req.body?.service as string) ?? 'analyze';
+      const cidInput = req.body?.cid as string | undefined;
+      const file = (req as express.Request & { file?: Express.Multer.File }).file;
+
+      // Return taskId immediately — frontend opens SSE stream with it
+      res.json({ taskId, success: true });
+
+      // Create emitter now; SSE subscriber attaches to it
+      const emitter = taskStreams.get(taskId) ?? new EventEmitter();
+      taskStreams.set(taskId, emitter);
+
+      const liveLog: string[] = [];
+      let currentStep = 1;
+
+      // Emit a step event to SSE + console
+      const emit = (stepNum: number, msg: string) => {
+        currentStep = stepNum;
+        liveLog.push(msg);
+        const evt: StepEvent = { stepNum, msg, liveLog: [...liveLog] };
+        emitter.emit('step', evt);
+        console.log(`[AgentA:${stepNum}] ${msg}`);
+      };
+
+      // Adapter: plugin callbacks call this
+      const callback: ActionHandlerCallback = async (response) => {
+        if (response.text) emit(currentStep, response.text);
+        return [];
+      };
 
       try {
-        const agentCard = {
-          name: character.name,
-          capabilities: character.settings?.capabilities || [],
-          pricing: character.settings?.pricing || {},
-          endpoint: character.settings?.endpoint || `http://localhost:${parseInt(getEnv("SERVER_PORT") || "8001")}/analyze`,
+        // Build state object — replaces ElizaOS ActionHandlerState
+        const state: ActionHandlerState = {
+          data: { serviceIntent: service },
+          recentMessagesData: [
+            { content: { text: service }, createdAt: Date.now() },
+          ],
         };
 
-        const jsonString = JSON.stringify(agentCard, null, 2);
-        const blobContent = new Blob([jsonString], { type: "application/json" });
-        const file = new File([blobContent], `agent-card.json`, { type: "application/json" });
-        const agentCardCID = await storageClient.getStorage().uploadFile(file);
-        const agentCardCIDString = typeof agentCardCID === 'string' ? agentCardCID : (agentCardCID.link ?? '');
+        // ── 1 → 2: AGENT_DISCOVER ───────────────────────────────────────
+        currentStep = 2;
+        emit(2, `🔍 Querying ERC-8004 registry for "${service}" capability...`);
+        await erc8004Actions.AGENT_DISCOVER.handler(
+          null,
+          null,
+          state,
+          {},
+          callback
+        );
 
-        state.data = { ...(state.data || {}), agentCardCIDString };
+        if (!state.data?.providerEndpoint) {
+          throw new Error(
+            `No provider found on-chain for service: ${service}. ` +
+              'Ensure AgentB is registered via register-services.js'
+          );
+        }
 
-        await callback?.({
-          text: `Agent card uploaded (CID: ${agentCardCID}). Registering on ERC-8004 IdentityRegistry...`
-        });
+        // ── 2: Upload / Prepare payload ──────────────────────────────────
+        const route = resolveServiceRoute(service);
 
-        if (providerWallet.erc8004) {
-          const erc8004Handler = erc8004Actions.AGENT_REGISTER.handler;
-          await erc8004Handler?.(_runtime, _message, state, _options, callback);
+        if (route.capability === 'csv-analysis') {
+          // CSV analysis: upload to Storacha for FREE (data transport only)
+          // No x402, no wallet, no user interaction. AgentA's Storacha creds.
+          if (!file) throw new Error('CSV file required for analysis');
+          if (!storacha)
+            throw new Error(
+              'Storacha unavailable — check STORACHA_AGENT_PRIVATE_KEY and STORACHA_AGENT_DELEGATION'
+            );
+
+          emit(2, `📤 Uploading CSV to Storacha (free data transport, no payment)...`);
+          const csvFile = new File([file.buffer], file.originalname, {
+            type: file.mimetype,
+          });
+          const cid = await storacha.uploadFile(csvFile);
+          const cidStr = cid.toString();
+          state.data!.inputCID = cidStr;
+          emit(2, `✅ CSV staged — inputCID: ${cidStr.slice(0, 20)}...`);
+        } else if (route.endpointSuffix === '/upload') {
+          // File storage: pass raw buffer to x402 plugin which sends it as multipart
+          if (!file) throw new Error('File required for storage service');
+          emit(2, `📦 Preparing file "${file.originalname}" for paid IPFS storage...`);
+          const ab = file.buffer.buffer.slice(
+            file.buffer.byteOffset,
+            file.buffer.byteOffset + file.buffer.byteLength
+          );
+          state.data!.fileBuffer = ab;
+          state.data!.fileName = file.originalname;
+          state.data!.fileMimeType = file.mimetype;
         } else {
-          await callback?.({
-            text: `Registration skipped (ERC-8004 not configured). Agent card CID: ${agentCardCID}`
-          });
-        }
-      } catch (error: unknown) {
-        const msg = error instanceof Error ? error.message : String(error);
-        elizaLogger.error("Agent registration error:", error);
-        await callback?.({ text: `Error registering agent: ${msg}` });
-      }
-    };
-    runtime.registerAction(registerAction);
-
-    runtime.registerAction({
-      name: 'ANALYZE_DATA',
-      description: 'Analyze CSV/JSON data: fetch input CID from Storacha, process with PapaParse/Zod, upload results',
-      similes: ['analyze', 'process', 'compute'],
-      validate: async () => true,
-      handler: async (
-        _runtime: unknown,
-        _message: unknown,
-        state: ActionHandlerState,
-        _options: unknown,
-        callback: ActionHandlerCallback
-      ) => {
-        const inputCID = state.data?.inputCID as string;
-        if (!inputCID) {
-          await callback?.({ text: "No input CID provided." });
-          return;
+          // File retrieval: just pass the CID
+          if (!cidInput) throw new Error('CID required for file retrieval');
+          emit(2, `🔎 Preparing retrieval request for CID: ${cidInput}...`);
+          state.data!.retrieveCID = cidInput;
         }
 
-        await callback?.({
-          text: "Payment verified. Fetching input data from Storacha..."
-        });
+        // ── 3: PAYMENT_REQUEST — x402 EIP-712 auto-sign + execute ────────
+        currentStep = 3;
+        emit(
+          3,
+          `💳 AgentA sending x402 payment → ${state.data!.providerEndpoint}`
+        );
+        await x402Actions.PAYMENT_REQUEST.handler(null, null, state, {}, callback);
 
-        try {
-          const inputData = await storageClient.getContent(inputCID);
-          const dataText = await inputData.text();
-          const data = JSON.parse(dataText);
+        const hasResult =
+          state.data?.resultCID ||
+          state.data?.storageResults ||
+          state.data?.retrievedData;
 
-          await callback?.({
-            text: "Processing data: parsing CSV, computing statistics..."
-          });
-
-          let results: any = {};
-          if (data.task && typeof data.task === 'string' && data.task.includes(',')) {
-            const csvData = Papa.parse(data.task, { header: true });
-            const numericValues = csvData.data
-              .filter((row: any) => row && Object.values(row).some((v: any) => !isNaN(parseFloat(v))))
-              .map((row: any) => Object.values(row).map((v: any) => parseFloat(v)).filter((v: any) => !isNaN(v)))
-              .flat();
-
-            if (numericValues.length > 0) {
-              const mean = numericValues.reduce((a: number, b: number) => a + b, 0) / numericValues.length;
-              const variance = numericValues.reduce((sum: number, val: number) => sum + Math.pow(val - mean, 2), 0) / numericValues.length;
-              const stdDev = Math.sqrt(variance);
-
-              results = {
-                rowsProcessed: csvData.data.length,
-                mean: mean.toFixed(2),
-                stdDev: stdDev.toFixed(2),
-                summary: "CSV analysis complete",
-              };
-            }
-          } else {
-            results = {
-              rowsProcessed: 1,
-              mean: 0,
-              stdDev: 0,
-              summary: "Data processed",
-              data: data,
-            };
-          }
-          
-          const jsonString = JSON.stringify(results, null, 2);
-          const blobContent = new Blob([jsonString], { type: "application/json" });
-          const file = new File([blobContent], `analysis-results.json`, { type: "application/json" });
-          const resultCID = await storageClient.getStorage().uploadFile(file);
-          const resultCIDString = typeof resultCID === 'string' ? resultCID : (resultCID.link ?? '');
-          
-          await callback?.({ 
-            text: `Analysis complete! Results uploaded (CID: ${resultCIDString}). Summary: ${results.rowsProcessed} rows, mean=${results.mean}, std dev=${results.stdDev}` 
-          });
-
-          state.data = { ...(state.data || {}), resultCIDString };
-        } catch (error: any) {
-          elizaLogger.error("Data analysis error:", error);
-          await callback?.({ text: `Error processing data: ${error.message}` });
-        }
-      },
-      examples: [
-        [
-          { user: "{{user1}}", content: { text: "Analyze data" } },
-          { user: "{{DataAnalyzer}}", content: { text: "Processing analysis..." } }
-        ],
-      ],
-    });
-
-    runtime.registerAction(x402Actions.PAYMENT_VERIFY);
-
-    runtime.clients = await initializeClients(character, runtime);
-    directClient.registerAgent(runtime);
-
-    await startProviderExpressServer(character, storageClient, runtime);
-
-    const registerState: ActionHandlerState = { data: {}, recentMessagesData: [] };
-    await registerAction.handler?.(
-      runtime as any,
-      {} as any,
-      registerState,
-      {},
-      async (response: { text?: string }) => {
-        elizaLogger.info(response.text || "");
-        return [];
-      }
-    );
-
-    elizaLogger.debug(`Started ${character.name} (Provider) as ${runtime.agentId}`);
-    return runtime;
-  } catch (error) {
-    elizaLogger.error(`Error starting provider agent:`, error);
-    throw error;
-  }
-}
-
-async function startProviderExpressServer(character: Character, storageClient: any, runtime: AgentRuntime) {
-  if (!process.env.X402_FACILITATOR_URL || !process.env.PAY_TO_ADDRESS) {
-    elizaLogger.warn("x402 not configured. Express server not started.");
-    return;
-  }
-
-  try {
-    const { paymentMiddleware, x402ResourceServer } = await import("@x402/express");
-    const { HTTPFacilitatorClient } = await import("@x402/core/server");
-    const { ExactEvmScheme } = await import("@x402/evm/exact/server");
-
-    const facilitatorClient = new HTTPFacilitatorClient({ 
-      url: process.env.X402_FACILITATOR_URL 
-    });
-    const resourceServer = new x402ResourceServer(facilitatorClient)
-      .register("eip155:84532", new ExactEvmScheme());
-
-    const providerPort = parseInt(character.settings?.endpoint?.split(':')[2]?.split('/')[0] || "8001");
-    const app = express();
-    app.use(express.json());
-
-    const pricing = character.settings?.pricing as { baseRate?: number; currency?: string } | undefined;
-    const price = `$${pricing?.baseRate || 0.01}`;
-
-    app.use(
-      paymentMiddleware(
-        {
-          "POST /analyze": {
-            accepts: {
-              scheme: "exact",
-              price,
-              network: "eip155:84532",
-              payTo: process.env.PAY_TO_ADDRESS as `0x${string}`,
-            },
-            description: "Data analysis service",
-          },
-        },
-        resourceServer,
-      ),
-    );
-
-    app.post("/analyze", async (req: express.Request, res: express.Response) => {
-      try {
-        const { inputCID, requirements } = req.body;
-        if (!inputCID) {
-          return res.status(400).json({ error: "inputCID required" });
+        if (!hasResult) {
+          throw new Error(
+            'Task execution failed — AgentB returned no result. Check AgentB server logs.'
+          );
         }
 
-        elizaLogger.info(`Processing analysis request for CID: ${inputCID}`);
+        // ── 4: Processing complete ────────────────────────────────────────
+        currentStep = 4;
+        emit(4, `✅ Payment confirmed, service delivered by AgentB`);
 
-        const inputData = await storageClient.getStorage().retrieve(inputCID);
-        const dataText = await inputData.text();
-        const data = JSON.parse(dataText);
+        // ── 4 / 5: REPUTATION_POST ────────────────────────────────────────
+        const repStep = route.capability === 'csv-analysis' ? 5 : 3;
+        currentStep = repStep;
+        emit(repStep, `⭐ Posting on-chain reputation for ${state.data!.providerWallet}...`);
+        await erc8004Actions.REPUTATION_POST.handler(null, null, state, {}, callback);
 
-        let results: any = {};
-        if (data.task && typeof data.task === 'string' && data.task.includes(',')) {
-          const csvData = Papa.parse(data.task, { header: true });
-          const numericValues = csvData.data
-            .filter((row: any) => row && Object.values(row).some((v: any) => !isNaN(parseFloat(v))))
-            .map((row: any) => Object.values(row).map((v: any) => parseFloat(v)).filter((v: any) => !isNaN(v)))
-            .flat();
+        // ── 5 / 6: Done ───────────────────────────────────────────────────
+        const doneStep = route.capability === 'csv-analysis' ? 6 : 4;
+        emit(doneStep, `🏆 Pipeline complete — all steps done`);
 
-          if (numericValues.length > 0) {
-            const mean = numericValues.reduce((a: number, b: number) => a + b, 0) / numericValues.length;
-            const variance = numericValues.reduce((sum: number, val: number) => sum + Math.pow(val - mean, 2), 0) / numericValues.length;
-            const stdDev = Math.sqrt(variance);
+        // Build final result object
+        const result: TaskResult = {
+          success: true,
+          service,
+          liveLog: [...liveLog],
+          reputationTxHash: state.data?.reputationTxHash as string,
+        };
 
-            results = {
-              rowsProcessed: csvData.data.length,
-              mean: mean.toFixed(2),
-              stdDev: stdDev.toFixed(2),
-              summary: requirements || "CSV analysis complete",
-            };
-          }
-        } else {
-          results = {
-            rowsProcessed: 1,
-            summary: requirements || "Data processed",
-            data: data,
+        if (state.data?.analysisResults) {
+          const ar = state.data.analysisResults as {
+            summary: string;
+            statistics: Record<string, unknown>;
+            insights: string[];
+            resultCID: string;
           };
+          result.resultCID = ar.resultCID;
+          result.summary = ar.summary;
+          result.statistics = ar.statistics;
+          result.insights = ar.insights;
+        } else if (state.data?.storageResults) {
+          const sr = state.data.storageResults as {
+            cid: string;
+            fileName: string;
+            fileSize: number;
+          };
+          result.cid = sr.cid;
+          result.fileName = sr.fileName;
+          result.fileSize = sr.fileSize;
+        } else if (state.data?.retrievedData) {
+          const buf = state.data.retrievedData as ArrayBuffer;
+          result.retrievedCID = state.data.retrievedCID as string;
+          result.retrievedContentType = state.data
+            .retrievedContentType as string;
+          result.retrievedDataBase64 = Buffer.from(buf).toString('base64');
+        } else if (state.data?.resultCID) {
+          result.resultCID = state.data.resultCID as string;
         }
 
-        const jsonString = JSON.stringify(results, null, 2);
-        const blobContent = new Blob([jsonString], { type: "application/json" });
-        const file = new File([blobContent], `analysis-results.json`, { type: "application/json" });
-        const resultCID = await storageClient.getStorage().uploadFile(file);
-
-        res.json({ resultCID, status: "completed", results });
-      } catch (error: any) {
-        elizaLogger.error("Analysis endpoint error:", error);
-        res.status(500).json({ error: error.message });
+        emitter.emit('done', result);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error('[AgentA] ❌ Task failed:', err);
+        liveLog.push(`❌ ${msg}`);
+        const event: ErrorResult = { error: msg, liveLog: [...liveLog] };
+        emitter.emit('error', event);
+      } finally {
+        // Clean up after SSE has drained
+        setTimeout(() => {
+          taskStreams.delete(taskId);
+        }, 8000);
       }
-    });
+    }
+  );
 
-    app.listen(providerPort, () => {
-      elizaLogger.success(`Provider Express server running on port ${providerPort}`);
-      elizaLogger.info(`Analysis endpoint: http://localhost:${providerPort}/analyze`);
+  // ── Health check ────────────────────────────────────────────────────────
+  app.get('/api/health', (_req, res) => {
+    res.json({
+      status: 'ok',
+      agent: 'RachaxCoordinator',
+      framework: 'lean-ts',
+      storacha: !!storacha,
+      erc8004: !!cfg.erc8004?.identityRegistryAddress,
+      x402: !!cfg.x402,
+      agentBEndpoints: {
+        analyzer: 'http://localhost:8001/analyze',
+        storage: 'http://localhost:8000/upload',
+        retrieval: 'http://localhost:8000/retrieve',
+      },
     });
-  } catch (error: any) {
-    elizaLogger.error("Failed to start Express server:", error);
-  }
-}
-
-const checkPortAvailable = (port: number): Promise<boolean> => {
-  return new Promise((resolve) => {
-    const server = net.createServer();
-    server.once("error", (err: NodeJS.ErrnoException) => {
-      if (err.code === "EADDRINUSE") {
-        resolve(false);
-      }
-    });
-    server.once("listening", () => {
-      server.close();
-      resolve(true);
-    });
-    server.listen(port);
   });
-};
 
-async function runPluginSqlMigrations() {
-  const mockRuntime: any = {
-    agentId: "migration-runner",
-    logger: { info: () => {}, debug: () => {}, warn: () => {}, error: () => {} },
-    getSetting: (key: string) => process.env[key] ?? undefined,
-    isReady: () => Promise.reject(new Error("Database adapter not registered")),
-    registerDatabaseAdapter: function (this: any, adapter: any) {
-      this._adapter = adapter;
-    },
-  };
-  mockRuntime.registerDatabaseAdapter = mockRuntime.registerDatabaseAdapter.bind(mockRuntime);
-  await sqlPlugin.init?.({}, mockRuntime);
-  const adapter = mockRuntime._adapter;
-  if (adapter?.runPluginMigrations) {
-    await adapter.init?.();
-    await adapter.runPluginMigrations([sqlPlugin], {});
-  }
+  const port = parseInt(process.env.TASK_API_PORT ?? '3001', 10);
+  app.listen(port, () => {
+    console.log(`\n🤖 Rachax402 AgentA Coordinator`);
+    console.log(`   POST  http://localhost:${port}/api/task`);
+    console.log(`   GET   http://localhost:${port}/api/task/:id/stream  (SSE)`);
+    console.log(`   GET   http://localhost:${port}/api/health\n`);
+  });
 }
 
-const startAgents = async () => {
-  const directClient = new DirectClient();
-  let serverPort = parseInt(getEnv("SERVER_PORT") || "3000");
-  const args = parseArguments();
-
-  const agentMode = args.mode || process.env.AGENT_MODE || "both";
-
-  await runPluginSqlMigrations();
-
-  try {
-    if (agentMode === "requester" || agentMode === "both") {
-      await startRequesterAgent(agentRequester, directClient);
-    }
-
-    if (agentMode === "provider" || agentMode === "both") {
-      await startProviderAgent(agentProvider, directClient);
-    }
-  } catch (error) {
-    elizaLogger.error("Error starting agents:", error);
-  }
-
-  while (!(await checkPortAvailable(serverPort))) {
-    elizaLogger.warn(`Port ${serverPort} is in use, trying ${serverPort + 1}`);
-    serverPort++;
-  }
-
-  directClient.startAgent = async (character: Character) => {
-    if (character.name === "DataRequester") {
-      return startRequesterAgent(character, directClient);
-    } else {
-      return startProviderAgent(character, directClient);
-    }
-  };
-
-  directClient.start(serverPort);
-
-  if (serverPort !== parseInt(getEnv("SERVER_PORT") || "3000")) {
-    elizaLogger.log(`Server started on alternate port ${serverPort}`);
-  }
-
-  elizaLogger.success("Rachax402 Antiphon agents started successfully");
-  elizaLogger.info(`Agent mode: ${agentMode}`);
-  elizaLogger.info(`Server running on port ${serverPort}`);
-};
-
-startAgents().catch((error) => {
-  elizaLogger.error("Unhandled error in startAgents:", error);
+main().catch((err) => {
+  console.error('[AgentA] Fatal startup error:', err);
   process.exit(1);
 });

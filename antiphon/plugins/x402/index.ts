@@ -1,14 +1,11 @@
-/**
- * ElizaOS Agent A (Requester)
- * Properly integrates with Agent B Express server
- */
-
 import { elizaLogger } from "@elizaos/core";
 import type { ActionHandlerCallback, ActionHandlerState } from "../../index.js";
-import axios from "axios";
-import { createWalletClient, http } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
+import { createPublicClient, http, type Hex } from "viem";
 import { baseSepolia } from "viem/chains";
+import { wrapFetchWithPayment, x402Client } from "@x402/fetch";
+import { registerExactEvmScheme } from "@x402/evm/exact/client";
+import { toClientEvmSigner } from "@x402/evm";
 
 export interface X402Config {
   facilitatorUrl: string;
@@ -16,11 +13,23 @@ export interface X402Config {
   rpcUrl: string;
 }
 
+function createPaidFetch(privateKey: Hex, rpcUrl: string) {
+  const account = privateKeyToAccount(privateKey);
+  const publicClient = createPublicClient({
+    chain: baseSepolia,
+    transport: http(rpcUrl),
+  });
+  const signer = toClientEvmSigner(account, publicClient);
+  const client = new x402Client();
+  registerExactEvmScheme(client, { signer });
+  return wrapFetchWithPayment(fetch, client);
+}
+
 export function getX402Actions(config: X402Config | null) {
   return {
     PAYMENT_REQUEST: {
       name: 'PAYMENT_REQUEST',
-      description: 'Send task request to Agent B, handle 402, sign payment, retry with proof',
+      description: 'Send task request to AgentB with x402 auto-payment (EIP-712)',
       similes: ['pay', 'payment', 'request service'],
       validate: async () => true,
       handler: async (
@@ -37,107 +46,116 @@ export function getX402Actions(config: X402Config | null) {
 
         const providerEndpoint = state.data?.providerEndpoint as string;
         const inputCID = state.data?.inputCID as string;
+        const capability = (state.data?.capability as string) || 'csv-analysis';
 
-        if (!providerEndpoint || !inputCID) {
-          await callback?.({ text: "Missing provider endpoint or input CID. Use AGENT_DISCOVER first." });
+        if (!providerEndpoint) {
+          await callback?.({ text: "Missing provider endpoint. Run AGENT_DISCOVER first." });
           return;
         }
 
         try {
-          await callback?.({ text: `Sending task request to ${providerEndpoint}...` });
+          const fetchWithPayment = createPaidFetch(config.privateKey as Hex, config.rpcUrl);
 
-          // Step 1: Initial request (will get 402)
-          const taskRequest = {
-            inputCID,
-            requirements: "statistical summary and trend analysis"
-          };
+          await callback?.({ text: `Sending paid request to ${providerEndpoint}...` });
 
-          const response = await axios.post(providerEndpoint, taskRequest, {
-            validateStatus: (status) => status === 200 || status === 402,
-            timeout: 15000
-          });
+          let paidResponse: Response;
 
-          if (response.status === 402) {
-            // Step 2: Parse payment requirements
-            const paymentHeader = response.headers['payment-required'];
-            if (!paymentHeader) {
-              throw new Error("402 response missing PAYMENT-REQUIRED header");
+          if (capability === 'csv-analysis') {
+            if (!inputCID) {
+              await callback?.({ text: "Missing inputCID for analysis." });
+              return;
+            }
+            paidResponse = await fetchWithPayment(providerEndpoint, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                inputCID,
+                requirements: (state.data?.requirements as string) || 'statistical summary and trend analysis',
+              }),
+            });
+          } else if (capability === 'file-retrieval') {
+            const cid = (state.data?.retrieveCID as string) || inputCID;
+            if (!cid) {
+              await callback?.({ text: "Missing CID for retrieval." });
+              return;
+            }
+            paidResponse = await fetchWithPayment(`${providerEndpoint}?cid=${encodeURIComponent(cid)}`, {
+              method: 'GET',
+            });
+          } else if (capability === 'file-storage') {
+            const fileBuffer = state.data?.fileBuffer as ArrayBuffer | undefined;
+            const fileName = (state.data?.fileName as string) || 'upload.bin';
+            const fileMimeType = (state.data?.fileMimeType as string) || 'application/octet-stream';
+
+            if (!fileBuffer) {
+              await callback?.({ text: "Missing file data for upload." });
+              return;
             }
 
-            const paymentReq = JSON.parse(
-              Buffer.from(paymentHeader, 'base64').toString()
-            );
+            const formData = new FormData();
+            const blob = new Blob([fileBuffer], { type: fileMimeType });
+            formData.append('file', blob, fileName);
 
-            const accept = paymentReq.accepts[0];
-            await callback?.({
-              text: `Payment required: ${accept.price} on ${accept.network}. Signing payment...`
+            paidResponse = await fetchWithPayment(providerEndpoint, {
+              method: 'POST',
+              body: formData,
             });
-
-            // Step 3: Sign payment with x402
-            const account = privateKeyToAccount(config.privateKey as `0x${string}`);
-            const walletClient = createWalletClient({
-              chain: baseSepolia,
-              transport: http(config.rpcUrl),
-              account
-            });
-
-            // Create payment payload
-            const paymentPayload = {
-              price: accept.price,
-              network: accept.network,
-              payTo: accept.payTo,
-              facilitator: config.facilitatorUrl,
-              timestamp: Date.now()
-            };
-
-            // Sign the payment
-            const payloadStr = JSON.stringify(paymentPayload);
-            const signature = await walletClient.signMessage({
-              message: payloadStr
-            });
-
-            const signedPayment = Buffer.from(
-              JSON.stringify({
-                payload: paymentPayload,
-                signature
-              })
-            ).toString('base64');
-
-            await callback?.({ text: "Payment signed. Retrying request..." });
-
-            // Step 4: Retry with payment proof
-            const paidResponse = await axios.post(providerEndpoint, taskRequest, {
-              headers: {
-                'X-PAYMENT': signedPayment,
-                'PAYMENT-SIGNATURE': signedPayment // Alternative header name
-              },
-              timeout: 30000
-            });
-
-            if (paidResponse.status === 200) {
-              const resultCID = paidResponse.data.resultCID;
-              await callback?.({
-                text: `✅ Payment verified! Analysis complete. Result CID: ${resultCID}`
-              });
-              
-              state.data = { 
-                ...state.data, 
-                resultCID,
-                rating: 5,
-                comment: "Excellent analysis service"
-              };
-            } else {
-              throw new Error(`Unexpected response status: ${paidResponse.status}`);
+          } else {
+            const cid = (state.data?.retrieveCID as string) || inputCID;
+            if (!cid) {
+              await callback?.({ text: "Missing CID for retrieval." });
+              return;
             }
-
-          } else if (response.status === 200) {
-            // No payment required (testing mode?)
-            await callback?.({
-              text: `Task completed without payment. Result CID: ${response.data.resultCID}`
+            paidResponse = await fetchWithPayment(`${providerEndpoint}?cid=${encodeURIComponent(cid)}`, {
+              method: 'GET',
             });
-            state.data = { ...state.data, resultCID: response.data.resultCID };
           }
 
+          if (!paidResponse.ok) {
+            const errBody = await paidResponse.text().catch(() => '');
+            throw new Error(`Request failed (${paidResponse.status}): ${errBody}`);
+          }
+
+          await callback?.({ text: "Payment verified. Processing response..." });
+
+          if (capability === 'csv-analysis') {
+            const result = await paidResponse.json();
+            state.data = {
+              ...state.data,
+              resultCID: result.resultCID,
+              analysisResults: {
+                summary: result.summary,
+                statistics: result.statistics,
+                insights: result.insights,
+                resultCID: result.resultCID,
+              },
+            };
+            await callback?.({ text: `Analysis complete. Result CID: ${result.resultCID}` });
+          } else if (capability === 'file-storage') {
+            const result = await paidResponse.json();
+            const cid = result.data?.cid || result.cid;
+            state.data = {
+              ...state.data,
+              resultCID: cid,
+              storageResults: {
+                cid,
+                fileName: result.data?.filename || state.data?.fileName,
+                fileSize: result.data?.size || 0,
+              },
+            };
+            await callback?.({ text: `File stored. CID: ${cid}` });
+          } else {
+            const contentType = paidResponse.headers.get('content-type') || 'application/octet-stream';
+            const cidHeader = paidResponse.headers.get('x-cid') || '';
+            const buffer = await paidResponse.arrayBuffer();
+            state.data = {
+              ...state.data,
+              retrievedData: buffer,
+              retrievedContentType: contentType,
+              retrievedCID: cidHeader,
+            };
+            await callback?.({ text: `File retrieved (${buffer.byteLength} bytes).` });
+          }
         } catch (error: unknown) {
           const msg = error instanceof Error ? error.message : String(error);
           elizaLogger.error("x402 payment request error:", error);
@@ -154,7 +172,7 @@ export function getX402Actions(config: X402Config | null) {
       handler: async (
         _runtime: unknown,
         _message: unknown,
-        state: ActionHandlerState,
+        _state: ActionHandlerState,
         _options: unknown,
         callback: ActionHandlerCallback
       ) => {
@@ -162,33 +180,7 @@ export function getX402Actions(config: X402Config | null) {
           await callback?.({ text: "x402 not configured." });
           return;
         }
-
-        try {
-          await callback?.({ text: "Verifying payment settlement..." });
-
-          const txHash = state.data?.paymentTxHash as string;
-          if (!txHash) {
-            await callback?.({ text: "No payment transaction hash found." });
-            return;
-          }
-
-          const response = await axios.get(
-            `${config.facilitatorUrl}/verify/${txHash}`,
-            { timeout: 10000 }
-          );
-
-          if (response.data.verified) {
-            await callback?.({
-              text: `✅ Payment verified: ${response.data.amount} ${response.data.currency} on ${response.data.network}`
-            });
-          } else {
-            await callback?.({ text: "❌ Payment verification failed." });
-          }
-        } catch (error: unknown) {
-          const msg = error instanceof Error ? error.message : String(error);
-          elizaLogger.error("x402 payment verify error:", error);
-          await callback?.({ text: `Payment verification error: ${msg}` });
-        }
+        await callback?.({ text: "Payment verification is handled automatically by wrapFetchWithPayment." });
       },
     },
   };
