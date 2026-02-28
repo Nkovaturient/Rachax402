@@ -6,13 +6,16 @@
 [![ERC-8004](https://img.shields.io/badge/ERC--8004-Agent%20Identity-purple)](https://eips.ethereum.org/EIPS/eip-8004)
 [![Base](https://img.shields.io/badge/Base-Sepolia%20%7C%20Mainnet-0052FF?logo=base)](https://docs.base.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178C6?logo=typescript)](https://www.typescriptlang.org/)
-[![License](https://img.shields.io/badge/License-ISC-yellow)](./LICENSE)
+<!-- [![License](https://img.shields.io/badge/License-ISC-yellow)](./LICENSE) -->
 
 **(A decentralized Agent co-ordination system integrating ERC-8004 (on-chain identity/reputation), x402 (payment protocol), and Storacha (decentralized storage) for agent-to-agent service discovery and payment-gated task execution).**
 
 > **Rachax402** = **Storacha** (decentralized storage) + **x402** (payment protocol). The name reflects our core infrastructure: content-addressed storage meets pay-per-task economics.
 
 ---
+<div align="center" >
+<img src="https://github.com/user-attachments/assets/51ba7815-0086-43f2-82d7-d5f318f988c5" width=400 height=300 />
+</div>
 
 ## What it does
 
