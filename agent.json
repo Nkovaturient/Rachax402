@@ -1,0 +1,181 @@
+{
+    "schema_version": "1.0.0",
+    "agent_name": "Rachax402 AgentA — DataRequester",
+    "description": "Autonomous orchestrator for the Rachax402 decentralised agent marketplace. Discovers on-chain services via ERC-8004, pays autonomously via x402 Permit2, coordinates task execution with registered AgentB providers, and posts verifiable on-chain reputation — with no human in the loop.",
+    "version": "1.0.0",
+    "deployment_url": "https://rachax402-agent.up.railway.app",
+    "repository": "https://github.com/Nkovaturient/Rachax402",
+  
+    "identity": {
+      "agent_id": "AgentA-Rachax402-DataRequester",
+      "operator_wallet": "0x2E84f9C413bFcEe925128734a7c85bf5bE595a0a",
+      "smart_wallet": "0xf2e20498d666F9b0D2AD9F7F14aDFf6cE9a6206F",
+      "erc8004_identity_registry": "0x1352abA587fFbbC398d7ecAEA31e2948D3aFE4Fb",
+      "erc8004_reputation_registry": "0x3FdD300147940a35F32AdF6De36b3358DA682B5c",
+      "network": "Base Sepolia",
+      "chain_id": 84532
+    },
+  
+    "registered_services": [
+      {
+        "name": "Rachax402DataAnalyzer",
+        "agent_address": "0xEAB418143643557C74479d38E773A64E35B5f6c9",
+        "capability": "csv-analysis",
+        "endpoint": "https://rachax402-analyzer-service.up.railway.app/analyze",
+        "price": "$0.01 USDC",
+        "payment_method": "x402 Permit2 EIP-1271",
+        "reputation": "5/5",
+        "total_ratings": 5
+      },
+      {
+        "name": "StorachaAgent",
+        "agent_address": "0x9D48b65Bb45f144CBC5662Fd3Fd011659371D0f8",
+        "capability": "file-storage",
+        "endpoints": {
+          "upload": "https://rachax402-storacha-service.up.railway.app/upload",
+          "retrieve": "https://rachax402-storacha-service.up.railway.app/retrieve"
+        },
+        "price_upload": "$0.10 USDC",
+        "price_retrieve": "$0.005 USDC",
+        "payment_method": "x402 Permit2 EIP-1271",
+        "reputation": "5/5",
+        "total_ratings": 4
+      }
+    ],
+  
+    "supported_tools": [
+      {
+        "name": "discoverService",
+        "type": "on-chain",
+        "description": "Queries ERC-8004 IdentityRegistry for capability → returns endpoint, price, payTo, reputation"
+      },
+      {
+        "name": "stageCsvForAnalysis",
+        "type": "ipfs",
+        "description": "Free upload of CSV to Storacha IPFS using AgentA credentials → returns inputCID"
+      },
+      {
+        "name": "X402ActionProvider_make_http_request",
+        "type": "http-payment",
+        "description": "HTTP request with x402 payment probe — returns 402 + payment options"
+      },
+      {
+        "name": "X402ActionProvider_retry_http_request_with_x402",
+        "type": "http-payment",
+        "description": "Retries request with signed Permit2 payment header after 402"
+      },
+      {
+        "name": "paidStoreFile",
+        "type": "http-payment",
+        "description": "Paid multipart file upload to AgentB StorachaStorage via x402 ($0.10 USDC)"
+      },
+      {
+        "name": "paidRetrieveFile",
+        "type": "http-payment",
+        "description": "Paid binary file retrieval from AgentB StorachaStorage via x402 ($0.005 USDC)"
+      },
+      {
+        "name": "checkCanRate",
+        "type": "on-chain",
+        "description": "Reads ERC-8004 ReputationRegistry rate limit before posting rating"
+      },
+      {
+        "name": "postReputation",
+        "type": "on-chain",
+        "description": "Writes 5/5 on-chain reputation to ERC-8004 ReputationRegistry with proof CID"
+      },
+      {
+        "name": "ERC20ActionProvider_get_balance",
+        "type": "on-chain",
+        "description": "Reads USDC balance of CDP Smart Wallet"
+      },
+      {
+        "name": "CdpApiActionProvider_request_faucet_funds",
+        "type": "faucet",
+        "description": "Requests testnet ETH/USDC from CDP faucet (Base Sepolia only)"
+      },
+      {
+        "name": "WalletActionProvider_get_wallet_details",
+        "type": "wallet",
+        "description": "Returns CDP Smart Wallet address used as raterAddress for reputation posts"
+      }
+    ],
+  
+    "tech_stack": {
+      "llm": "claude-sonnet-4-6 (@ai-sdk/anthropic)",
+      "agent_framework": "Coinbase AgentKit + Vercel AI SDK v5",
+      "frontend": "Next.js 16",
+      "wallet": "CDP Smart Wallet (ERC-4337)",
+      "payment_protocol": "x402 v2 — Permit2 + EIP-1271 (gasless signing)",
+      "payment_facilitator": "CDP Production Facilitator",
+      "identity_protocol": "ERC-8004",
+      "storage": "Storacha (IPFS + Filecoin)",
+      "blockchain": "Base Sepolia (testnet) → Base Mainnet ready",
+      "contracts": "Solidity / Foundry"
+    },
+  
+    "supported_task_categories": [
+      "csv-analysis",
+      "statistical-computation",
+      "file-storage",
+      "file-retrieval",
+      "on-chain-reputation",
+      "agent-service-discovery",
+      "autonomous-payment"
+    ],
+  
+    "compute_constraints": {
+      "max_steps_per_task": 15,
+      "max_payment_per_task_usdc": 1.0,
+      "max_file_size_mb": 50,
+      "heartbeat_interval_ms": 4000,
+      "payment_settlement_timeout_ms": 300000
+    },
+  
+    "decision_loop": [
+      "discover → ERC-8004 on-chain capability lookup",
+      "plan → LLM selects tools, routes task type",
+      "execute → stage data, call x402-gated service",
+      "verify → confirm 200 + resultCID returned",
+      "submit → post on-chain reputation with proof CID"
+    ],
+  
+    "guardrails": [
+      "Payment capped at $1 USDC per task",
+      "Only pays to addresses discovered via ERC-8004 registry",
+      "Permit2 allowance verified on startup (ensurePermit2Approval)",
+      "Non-fatal payment failure — retries before aborting",
+      "Rate limit checked before every reputation post (checkCanRate)",
+      "Private keys never exposed in responses",
+      "CID format validated before on-chain calls"
+    ],
+  
+    "erc8004_integration": {
+      "reads_reputation": true,
+      "writes_reputation": true,
+      "selects_by_reputation": true,
+      "proof_cid_anchored": true,
+      "description": "AgentA reads on-chain reputation to select highest-scoring AgentB, then writes 5/5 rating with IPFS result CID as verifiable proof after every successful task"
+    },
+  
+    "multi_agent": {
+      "enabled": true,
+      "agents": [
+        {
+          "id": "AgentA",
+          "role": "Orchestrator / Payer",
+          "wallet": "0xf2e20498d666F9b0D2AD9F7F14aDFf6cE9a6206F"
+        },
+        {
+          "id": "AgentB-DataAnalyzer",
+          "role": "CSV Analysis Service Provider",
+          "wallet": "0xEAB418143643557C74479d38E773A64E35B5f6c9"
+        },
+        {
+          "id": "AgentB-StorachaStorage",
+          "role": "IPFS File Storage Service Provider",
+          "wallet": "0x9D48b65Bb45f144CBC5662Fd3Fd011659371D0f8"
+        }
+      ]
+    }
+  }
