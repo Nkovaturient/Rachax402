@@ -97,3 +97,27 @@ Dockerfile — reverted to the simple standard COPY:
 
 - The pnpm workspace warning that outputFileTracingRoot was silencing is cosmetic — it doesn't affect the build or the running app.
 - Git commit: fix: remove outputFileTracingRoot, standalone path now env-consistent
+
+---
+
+## chore(antiphon): remove stale packages, standardize on npm, fix Turbopack workspace root
+
+**Root cause**
+Next.js 16 Turbopack detects workspace roots by scanning for lockfiles walking up the directory tree. The root `antiphon/pnpm-lock.yaml` caused Turbopack to infer `antiphon/` as the workspace root, making CSS `@import "tailwindcss"` resolve from that directory instead of `onchain-agent/node_modules/`. Result: `Can't resolve 'tailwindcss'` on every page compile, plus Turbopack scanning the entire `antiphon/` tree (contracts/out, stale node_modules) causing heavy CPU/disk/memory load on macOS.
+
+**Changes**
+
+Removed stale directories and root orchestrator — `frontend/`, `shared/`, `plugins/`, root `index.ts`, `test-coordination.js`. None of these were imported by `onchain-agent`, `server`, or `mcp-server`. Root `package.json`, `tsconfig.json`, and `node_modules/` removed along with them.
+
+Purged mixed package manager artifacts from `onchain-agent/` — deleted `pnpm-lock.yaml`, `pnpm-workspace.yaml` (was not a real workspace config), and `.yarnrc.yml`. Retained `package-lock.json` and `.npmrc` (`legacy-peer-deps=true`). The Dockerfile already declared npm as the sole authority.
+
+Added `turbopack.root: __dirname` to `next.config.js` as a safety net — pins the Turbopack workspace root to `onchain-agent/` so any future lockfile added above the project cannot re-trigger the issue. Dev-mode only; production builds already use `--webpack`.
+
+Cleared `.next/` after applying fixes — the Turbopack build graph in `.next/dev/build/` had `antiphon/` baked as the workspace root. `turbopack.root` alone does not invalidate this cache; a full wipe was required to pick up the corrected root on the next run.
+
+**Verified**
+```
+▲ Next.js 16.2.0 (Turbopack)
+✓ Ready in 167ms
+GET / 200 in 1147ms   ← page compiled, no CSS errors, no lockfile warning
+```
