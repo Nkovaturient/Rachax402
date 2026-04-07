@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.13;
+pragma solidity 0.8.34;
 
 import {Test, console} from "forge-std/Test.sol";
-import {Vm} from "lib/forge-std/src/Vm.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {AgentIdentityRegistry} from "../../src/AgentIdentityRegistry.sol";
 
 contract AgentIdentityRegistryTest is Test {
@@ -40,6 +40,7 @@ contract AgentIdentityRegistryTest is Test {
     );
     event CapabilityAdded(address indexed agent, string capability);
     event CapabilityRemoved(address indexed agent, string capability);
+    event AgentDeregistered(address indexed agent);
 
     function setUp() public {
         registry = new AgentIdentityRegistry();
@@ -140,7 +141,8 @@ contract AgentIdentityRegistryTest is Test {
 
         assertEq(registry.getRegisteredAgentsCount(), 3);
 
-        address[] memory allAgents = registry.getAllRegisteredAgents();
+        (address[] memory allAgents, uint256 total) = registry.getAllRegisteredAgents(0, 0);
+        assertEq(total, 3);
         assertEq(allAgents.length, 3);
         assertEq(allAgents[0], agentA);
         assertEq(allAgents[1], agentB);
@@ -423,15 +425,17 @@ contract AgentIdentityRegistryTest is Test {
         vm.prank(agentB);
         registry.registerAgent(CID_B, capabilitiesB);
 
-        address[] memory statisticsAgents = registry.getAgentsByCapability("statistics");
+        (address[] memory statisticsAgents, uint256 t1) = registry.getAgentsByCapability("statistics", 0, 0);
 
+        assertEq(t1, 2);
         assertEq(statisticsAgents.length, 2);
         assertEq(statisticsAgents[0], agentA);
         assertEq(statisticsAgents[1], agentB);
     }
 
-    function test_GetAgentsByCapability_EmptyResult() public {
-        address[] memory agents = registry.getAgentsByCapability("non-existent");
+    function test_GetAgentsByCapability_EmptyResult() public view {
+        (address[] memory agents, uint256 t2) = registry.getAgentsByCapability("non-existent", 0, 0);
+        assertEq(t2, 0);
         assertEq(agents.length, 0);
     }
 
@@ -462,7 +466,7 @@ contract AgentIdentityRegistryTest is Test {
         assertTrue(registry.isAgentRegistered(agentA));
     }
 
-    function test_IsAgentRegistered_False() public {
+    function test_IsAgentRegistered_False() public view {
         assertFalse(registry.isAgentRegistered(agentA));
     }
 
@@ -473,19 +477,17 @@ contract AgentIdentityRegistryTest is Test {
         registry.registerAgent(CID_A, capabilitiesA);
 
         // Initially agentA has "statistics"
-        address[] memory beforeUpdate = registry.getAgentsByCapability("statistics");
+        (address[] memory beforeUpdate, ) = registry.getAgentsByCapability("statistics", 0, 0);
         assertEq(beforeUpdate.length, 1);
 
         // Update to remove "statistics"
         vm.prank(agentA);
         registry.updateAgentCard(UPDATED_CID, updatedCapabilities);
 
-        // Now "statistics" should have no agents
-        address[] memory afterUpdate = registry.getAgentsByCapability("statistics");
+        (address[] memory afterUpdate, ) = registry.getAgentsByCapability("statistics", 0, 0);
         assertEq(afterUpdate.length, 0);
 
-        // New capabilities should be indexed
-        address[] memory mlAgents = registry.getAgentsByCapability("machine-learning");
+        (address[] memory mlAgents, ) = registry.getAgentsByCapability("machine-learning", 0, 0);
         assertEq(mlAgents.length, 1);
         assertEq(mlAgents[0], agentA);
     }
@@ -505,7 +507,7 @@ contract AgentIdentityRegistryTest is Test {
         assertEq(caps.length, 2);
 
         // Capability index should only have agentA once
-        address[] memory csvAgents = registry.getAgentsByCapability("csv-analysis");
+        (address[] memory csvAgents, ) = registry.getAgentsByCapability("csv-analysis", 0, 0);
         assertEq(csvAgents.length, 1);
     }
 
@@ -521,5 +523,67 @@ contract AgentIdentityRegistryTest is Test {
         // Should only have 2 capabilities (empty skipped)
         string[] memory caps = registry.getAgentCapabilities(agentA);
         assertEq(caps.length, 2);
+    }
+
+    function test_DeregisterAgent_Success() public {
+        vm.prank(agentA);
+        registry.registerAgent(CID_A, capabilitiesA);
+
+        vm.expectEmit(true, false, false, false);
+        emit AgentDeregistered(agentA);
+
+        vm.prank(agentA);
+        registry.deregisterAgent();
+
+        assertFalse(registry.isAgentRegistered(agentA));
+        assertEq(registry.getRegisteredAgentsCount(), 0);
+    }
+
+    function test_RegisterAgent_RevertIfTooManyCapabilities() public {
+        string[] memory many = new string[](21);
+        for (uint256 i = 0; i < 21; i++) {
+            many[i] = string(abi.encodePacked("cap-", vm.toString(i)));
+        }
+
+        vm.expectRevert(AgentIdentityRegistry.TooManyCapabilities.selector);
+
+        vm.prank(agentA);
+        registry.registerAgent(CID_A, many);
+    }
+
+    function test_GetAllRegisteredAgents_Pagination() public {
+        vm.prank(agentA);
+        registry.registerAgent(CID_A, capabilitiesA);
+
+        vm.prank(agentB);
+        registry.registerAgent(CID_B, capabilitiesB);
+
+        (address[] memory page, uint256 total) = registry.getAllRegisteredAgents(1, 1);
+        assertEq(total, 2);
+        assertEq(page.length, 1);
+        assertEq(page[0], agentB);
+    }
+
+    function test_View_RevertOnZeroAddress() public {
+        vm.expectRevert(AgentIdentityRegistry.InvalidAddress.selector);
+        registry.getAgentCard(address(0));
+
+        vm.expectRevert(AgentIdentityRegistry.InvalidAddress.selector);
+        registry.getAgentCapabilities(address(0));
+
+        vm.expectRevert(AgentIdentityRegistry.InvalidAddress.selector);
+        registry.isAgentRegistered(address(0));
+
+        vm.expectRevert(AgentIdentityRegistry.InvalidAddress.selector);
+        registry.agentHasCapability(address(0), "x");
+    }
+
+    function test_RegisterAgent_RevertWhenPaused() public {
+        registry.pause();
+
+        vm.expectRevert(AgentIdentityRegistry.EnforcedPause.selector);
+
+        vm.prank(agentA);
+        registry.registerAgent(CID_A, capabilitiesA);
     }
 }

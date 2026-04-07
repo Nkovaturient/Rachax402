@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.13;
+pragma solidity 0.8.34;
 
 import {Test} from "forge-std/Test.sol";
+import {AgentIdentityRegistry} from "../../src/AgentIdentityRegistry.sol";
 import {AgentReputationRegistry} from "../../src/AgentReputationRegistry.sol";
 
 /**
@@ -9,6 +10,7 @@ import {AgentReputationRegistry} from "../../src/AgentReputationRegistry.sol";
  * @dev Tests for property-based and invariant testing
  */
 contract AgentReputationRegistryFuzzTest is Test {
+    AgentIdentityRegistry public identity;
     AgentReputationRegistry public registry;
 
     address public targetAgent;
@@ -16,12 +18,23 @@ contract AgentReputationRegistryFuzzTest is Test {
     uint256 public constant NUM_RATERS = 10;
 
     function setUp() public {
-        registry = new AgentReputationRegistry();
+        identity = new AgentIdentityRegistry();
+        registry = new AgentReputationRegistry(address(identity));
         targetAgent = makeAddr("targetAgent");
+        _registerAgent(targetAgent);
 
         for (uint256 i = 0; i < NUM_RATERS; i++) {
-            raters.push(makeAddr(string(abi.encodePacked("rater", i))));
+            address r = makeAddr(string(abi.encodePacked("rater", i)));
+            raters.push(r);
+            _registerAgent(r);
         }
+    }
+
+    function _registerAgent(address agent) internal {
+        string[] memory caps = new string[](1);
+        caps[0] = "fuzz-cap";
+        vm.prank(agent);
+        identity.registerAgent("bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi", caps);
     }
 
     // ============ Fuzz Tests ============
@@ -31,6 +44,7 @@ contract AgentReputationRegistryFuzzTest is Test {
         rating = uint8(bound(rating, 1, 5));
 
         address rater = makeAddr("fuzzRater");
+        _registerAgent(rater);
 
         vm.prank(rater);
         registry.postReputation(targetAgent, rating, "test", "QmProof");
@@ -48,6 +62,7 @@ contract AgentReputationRegistryFuzzTest is Test {
         vm.assume(rating < 1 || rating > 5);
 
         address rater = makeAddr("invalidRater");
+        _registerAgent(rater);
 
         vm.prank(rater);
         vm.expectRevert(
@@ -100,6 +115,7 @@ contract AgentReputationRegistryFuzzTest is Test {
             address rater = makeAddr(
                 string(abi.encodePacked("boundRater", i))
             );
+            _registerAgent(rater);
 
             vm.prank(rater);
             registry.postReputation(targetAgent, rating, "", "");
@@ -139,6 +155,7 @@ contract AgentReputationRegistryFuzzTest is Test {
         timeElapsed = bound(timeElapsed, 0, 2 days);
 
         address rater = makeAddr("rateLimitRater");
+        _registerAgent(rater);
 
         vm.prank(rater);
         registry.postReputation(targetAgent, 3, "", "");
@@ -163,6 +180,7 @@ contract AgentReputationRegistryFuzzTest is Test {
         timeElapsed = bound(timeElapsed, 0, 2 days);
 
         address rater = makeAddr("canRateRater");
+        _registerAgent(rater);
 
         // Initially can rate
         (bool canRateBefore, ) = registry.canRate(rater, targetAgent);
@@ -211,8 +229,8 @@ contract AgentReputationRegistryFuzzTest is Test {
         }
 
         uint256 count = registry.getRatingsCount(targetAgent);
-        AgentReputationRegistry.Rating[] memory ratings = registry
-            .getAllRatings(targetAgent);
+        (AgentReputationRegistry.Rating[] memory ratings, ) = registry
+            .getAllRatings(targetAgent, 0, 0);
         assertEq(count, ratings.length);
     }
 
@@ -232,18 +250,19 @@ contract AgentReputationRegistryFuzzTest is Test {
  * @dev Handler contract for stateful invariant testing
  */
 contract AgentReputationRegistryHandler is Test {
+    AgentIdentityRegistry public identity;
     AgentReputationRegistry public registry;
 
     address[] public targets;
     address[] public raters;
 
-    // Ghost variables for tracking
     mapping(address => uint256) public totalScoreGhost;
     mapping(address => uint256) public totalRatingsGhost;
     uint256 public totalPostCount;
 
-    constructor(AgentReputationRegistry _registry) {
+    constructor(AgentReputationRegistry _registry, AgentIdentityRegistry _identity) {
         registry = _registry;
+        identity = _identity;
 
         for (uint256 i = 0; i < 3; i++) {
             targets.push(makeAddr(string(abi.encodePacked("target", i))));
@@ -251,6 +270,17 @@ contract AgentReputationRegistryHandler is Test {
 
         for (uint256 i = 0; i < 10; i++) {
             raters.push(makeAddr(string(abi.encodePacked("rater", i))));
+        }
+
+        string[] memory caps = new string[](1);
+        caps[0] = "inv-cap";
+        for (uint256 i = 0; i < targets.length; i++) {
+            vm.prank(targets[i]);
+            identity.registerAgent("bafybeihkoviema7g3gxyt6la7vd5ho32ictqbilu3ez5n5zvkdxjqpnqfa", caps);
+        }
+        for (uint256 i = 0; i < raters.length; i++) {
+            vm.prank(raters[i]);
+            identity.registerAgent("bafybeiemxf5abjwjbikoz4mc3a3dla6ual3jsgpdr4cjr3oz3evfyavhwq", caps);
         }
     }
 
@@ -289,12 +319,14 @@ contract AgentReputationRegistryHandler is Test {
  * @title AgentReputationRegistry Stateful Invariant Tests
  */
 contract AgentReputationRegistryInvariantTest is Test {
+    AgentIdentityRegistry public identity;
     AgentReputationRegistry public registry;
     AgentReputationRegistryHandler public handler;
 
     function setUp() public {
-        registry = new AgentReputationRegistry();
-        handler = new AgentReputationRegistryHandler(registry);
+        identity = new AgentIdentityRegistry();
+        registry = new AgentReputationRegistry(address(identity));
+        handler = new AgentReputationRegistryHandler(registry, identity);
 
         targetContract(address(handler));
     }

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.13;
+pragma solidity 0.8.34;
 
 import {Test} from "forge-std/Test.sol";
 import {AgentIdentityRegistry} from "../../src/AgentIdentityRegistry.sol";
@@ -134,9 +134,12 @@ contract AgentIdentityRegistryFuzzTest is Test {
 
         assertTrue(registry.agentHasCapability(agent, capability));
 
-        address[] memory agentsWithCap = registry.getAgentsByCapability(
-            capability
+        (address[] memory agentsWithCap, uint256 n) = registry.getAgentsByCapability(
+            capability,
+            0,
+            0
         );
+        assertEq(n, 1);
         assertEq(agentsWithCap.length, 1);
         assertEq(agentsWithCap[0], agent);
     }
