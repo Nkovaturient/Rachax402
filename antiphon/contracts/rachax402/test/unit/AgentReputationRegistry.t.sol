@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.13;
+pragma solidity 0.8.34;
 
 import {Test, console} from "forge-std/Test.sol";
-import {Vm} from "lib/forge-std/src/Vm.sol";
+import {Vm} from "forge-std/Vm.sol";
+import {AgentIdentityRegistry} from "../../src/AgentIdentityRegistry.sol";
 import {AgentReputationRegistry} from "../../src/AgentReputationRegistry.sol";
 
 contract AgentReputationRegistryTest is Test {
+    AgentIdentityRegistry public identity;
     AgentReputationRegistry public registry;
 
     // Test addresses
@@ -33,14 +35,27 @@ contract AgentReputationRegistryTest is Test {
     event FirstRatingReceived(address indexed agent);
 
     function setUp() public {
-        registry = new AgentReputationRegistry();
+        identity = new AgentIdentityRegistry();
+        registry = new AgentReputationRegistry(address(identity));
 
-        // Setup test addresses
         raterA = makeAddr("raterA");
         raterB = makeAddr("raterB");
         raterC = makeAddr("raterC");
         targetAgent = makeAddr("targetAgent");
         anotherAgent = makeAddr("anotherAgent");
+
+        _registerAgent(raterA);
+        _registerAgent(raterB);
+        _registerAgent(raterC);
+        _registerAgent(targetAgent);
+        _registerAgent(anotherAgent);
+    }
+
+    function _registerAgent(address agent) internal {
+        string[] memory caps = new string[](1);
+        caps[0] = "test-cap";
+        vm.prank(agent);
+        identity.registerAgent(PROOF_CID, caps);
     }
 
     // postReputation Tests
@@ -155,6 +170,72 @@ contract AgentReputationRegistryTest is Test {
         registry.postReputation(raterA, 5, COMMENT_GOOD, PROOF_CID);
     }
 
+    function test_PostReputation_RevertIfRaterNotRegistered() public {
+        address stranger = makeAddr("stranger");
+
+        vm.expectRevert(
+            abi.encodeWithSelector(AgentReputationRegistry.RaterNotRegistered.selector, stranger)
+        );
+
+        vm.prank(stranger);
+        registry.postReputation(targetAgent, 5, COMMENT_GOOD, PROOF_CID);
+    }
+
+    function test_PostReputation_RevertIfTargetNotRegistered() public {
+        address notInRegistry = makeAddr("notInRegistry");
+
+        vm.expectRevert(
+            abi.encodeWithSelector(AgentReputationRegistry.TargetNotRegistered.selector, notInRegistry)
+        );
+
+        vm.prank(raterA);
+        registry.postReputation(notInRegistry, 5, COMMENT_GOOD, PROOF_CID);
+    }
+
+    function test_PostReputation_RevertWhenPaused() public {
+        registry.pause();
+
+        vm.expectRevert(AgentReputationRegistry.EnforcedPause.selector);
+
+        vm.prank(raterA);
+        registry.postReputation(targetAgent, 5, COMMENT_GOOD, PROOF_CID);
+    }
+
+    function test_RemoveRating_ByOwner() public {
+        vm.prank(raterA);
+        registry.postReputation(targetAgent, 5, COMMENT_GOOD, PROOF_CID);
+
+        assertEq(registry.getRatingsCount(targetAgent), 1);
+
+        registry.removeRating(targetAgent, 0);
+
+        assertEq(registry.getRatingsCount(targetAgent), 0);
+        assertFalse(registry.hasBeenRated(targetAgent));
+    }
+
+    function test_View_RevertOnZeroAddress() public {
+        vm.expectRevert(AgentReputationRegistry.InvalidAddress.selector);
+        registry.getReputationScore(address(0));
+
+        vm.expectRevert(AgentReputationRegistry.InvalidAddress.selector);
+        registry.getRecentRatings(address(0), 1);
+
+        vm.expectRevert(AgentReputationRegistry.InvalidAddress.selector);
+        registry.getAllRatings(address(0), 0, 0);
+
+        vm.expectRevert(AgentReputationRegistry.InvalidAddress.selector);
+        registry.getRatingsCount(address(0));
+
+        vm.expectRevert(AgentReputationRegistry.InvalidAddress.selector);
+        registry.canRate(address(0), targetAgent);
+
+        vm.expectRevert(AgentReputationRegistry.InvalidAddress.selector);
+        registry.canRate(raterA, address(0));
+
+        vm.expectRevert(AgentReputationRegistry.InvalidAddress.selector);
+        registry.hasBeenRated(address(0));
+    }
+
     function test_PostReputation_RevertIfRateLimitExceeded() public {
         // First rating
         vm.prank(raterA);
@@ -231,7 +312,7 @@ contract AgentReputationRegistryTest is Test {
         assertEq(totalRatings, 3);
     }
 
-    function test_GetReputationScore_NoRatings() public {
+    function test_GetReputationScore_NoRatings() public view {
         (uint256 score, uint256 totalRatings) = registry.getReputationScore(targetAgent);
 
         assertEq(score, 0);
@@ -309,7 +390,7 @@ contract AgentReputationRegistryTest is Test {
         assertEq(ratings[0].rating, 5);
     }
 
-    function test_GetRecentRatings_NoRatings() public {
+    function test_GetRecentRatings_NoRatings() public view {
         AgentReputationRegistry.Rating[] memory ratings = registry.getRecentRatings(targetAgent, 5);
 
         assertEq(ratings.length, 0);
@@ -330,7 +411,7 @@ contract AgentReputationRegistryTest is Test {
         vm.prank(raterB);
         registry.postReputation(targetAgent, 4, "Second", PROOF_CID);
 
-        AgentReputationRegistry.Rating[] memory ratings = registry.getAllRatings(targetAgent);
+        (AgentReputationRegistry.Rating[] memory ratings, ) = registry.getAllRatings(targetAgent, 0, 0);
 
         assertEq(ratings.length, 2);
         // Chronological order
@@ -338,8 +419,8 @@ contract AgentReputationRegistryTest is Test {
         assertEq(ratings[1].rating, 4);
     }
 
-    function test_GetAllRatings_NoRatings() public {
-        AgentReputationRegistry.Rating[] memory ratings = registry.getAllRatings(targetAgent);
+    function test_GetAllRatings_NoRatings() public view {
+        (AgentReputationRegistry.Rating[] memory ratings, ) = registry.getAllRatings(targetAgent, 0, 0);
 
         assertEq(ratings.length, 0);
     }
@@ -356,13 +437,13 @@ contract AgentReputationRegistryTest is Test {
         assertEq(registry.getRatingsCount(targetAgent), 2);
     }
 
-    function test_GetRatingsCount_Zero() public {
+    function test_GetRatingsCount_Zero() public view {
         assertEq(registry.getRatingsCount(targetAgent), 0);
     }
 
     // canRate Tests
 
-    function test_CanRate_TrueIfNeverRated() public {
+    function test_CanRate_TrueIfNeverRated() public view {
         (bool canRateNow, uint256 nextAllowedTime) = registry.canRate(raterA, targetAgent);
 
         assertTrue(canRateNow);
@@ -413,7 +494,7 @@ contract AgentReputationRegistryTest is Test {
         assertTrue(registry.hasBeenRated(targetAgent));
     }
 
-    function test_HasBeenRated_False() public {
+    function test_HasBeenRated_False() public view {
         assertFalse(registry.hasBeenRated(targetAgent));
     }
 
@@ -425,7 +506,7 @@ contract AgentReputationRegistryTest is Test {
         vm.prank(raterA);
         registry.postReputation(targetAgent, 5, COMMENT_GOOD, PROOF_CID);
 
-        AgentReputationRegistry.Rating[] memory ratings = registry.getAllRatings(targetAgent);
+        (AgentReputationRegistry.Rating[] memory ratings, ) = registry.getAllRatings(targetAgent, 0, 0);
 
         assertEq(ratings[0].rating, 5);
         assertEq(ratings[0].comment, COMMENT_GOOD);

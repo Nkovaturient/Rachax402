@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.13;
+pragma solidity 0.8.34;
 
 /**
  * @title AgentIdentityRegistry Contract
@@ -14,6 +14,12 @@ contract AgentIdentityRegistry {
     error InvalidCID();
     error InvalidCapabilityTag();
     error EmptyCapabilityTags();
+    error InvalidAddress();
+    error CIDTooLong();
+    error TagTooLong();
+    error TooManyCapabilities();
+    error NotOwner();
+    error EnforcedPause();
 
     // Type Declarations
     struct AgentInfo {
@@ -22,7 +28,15 @@ contract AgentIdentityRegistry {
         bool isRegistered;
     }
 
+    // Constants
+    uint256 public constant MAX_CAPABILITIES = 20;
+    uint256 public constant MAX_CID_LENGTH = 256;
+    uint256 public constant MAX_TAG_LENGTH = 64;
+
     // State Variables
+    address private s_owner;
+    bool private s_paused;
+
     /// @dev Mapping from agent address to their info
     mapping(address => AgentInfo) private s_agents;
 
@@ -30,7 +44,8 @@ contract AgentIdentityRegistry {
     mapping(string => address[]) private s_capabilityToAgents;
 
     /// @dev Mapping to track agent index in capability array for O(1) removal
-    mapping(string => mapping(address => uint256)) private s_agentIndexInCapability;
+    mapping(string => mapping(address => uint256))
+        private s_agentIndexInCapability;
 
     /// @dev Mapping to track if agent has a specific capability (for O(1) lookup)
     mapping(address => mapping(string => bool)) private s_agentHasCapability;
@@ -55,8 +70,29 @@ contract AgentIdentityRegistry {
     );
     event CapabilityAdded(address indexed agent, string capability);
     event CapabilityRemoved(address indexed agent, string capability);
+    event AgentDeregistered(address indexed agent);
+    event OwnershipTransferred(
+        address indexed previousOwner,
+        address indexed newOwner
+    );
+    event Paused(address account);
+    event Unpaused(address account);
 
     // Modifiers
+    modifier onlyOwner() {
+        if (msg.sender != s_owner) {
+            revert NotOwner();
+        }
+        _;
+    }
+
+    modifier whenNotPaused() {
+        if (s_paused) {
+            revert EnforcedPause();
+        }
+        _;
+    }
+
     modifier onlyAgentOwner() {
         if (!s_agents[msg.sender].isRegistered) {
             revert AgentNotRegistered(msg.sender);
@@ -68,13 +104,50 @@ contract AgentIdentityRegistry {
         if (bytes(cid).length == 0) {
             revert InvalidCID();
         }
+        if (bytes(cid).length > MAX_CID_LENGTH) {
+            revert CIDTooLong();
+        }
         _;
     }
 
-    // Constructor
-    constructor() {}
+    modifier nonZeroAddress(address a) {
+        if (a == address(0)) {
+            revert InvalidAddress();
+        }
+        _;
+    }
+
+    constructor() {
+        s_owner = msg.sender;
+    }
 
     // External Functions
+
+    function pause() external onlyOwner {
+        s_paused = true;
+        emit Paused(msg.sender);
+    }
+
+    function unpause() external onlyOwner {
+        s_paused = false;
+        emit Unpaused(msg.sender);
+    }
+
+    function transferOwnership(
+        address newOwner
+    ) external onlyOwner nonZeroAddress(newOwner) {
+        address previous = s_owner;
+        s_owner = newOwner;
+        emit OwnershipTransferred(previous, newOwner);
+    }
+
+    function owner() external view returns (address) {
+        return s_owner;
+    }
+
+    function paused() external view returns (bool) {
+        return s_paused;
+    }
 
     /**
      * @dev registerAgent Register an agent with their agent card CID and capability tags
@@ -84,7 +157,7 @@ contract AgentIdentityRegistry {
     function registerAgent(
         string calldata agentCardCID,
         string[] calldata capabilityTags
-    ) external validCID(agentCardCID) {
+    ) external whenNotPaused validCID(agentCardCID) {
         if (s_agents[msg.sender].isRegistered) {
             revert AgentAlreadyRegistered(msg.sender);
         }
@@ -112,7 +185,7 @@ contract AgentIdentityRegistry {
     function updateAgentCard(
         string calldata newCID,
         string[] calldata newCapabilityTags
-    ) external onlyAgentOwner() validCID(newCID) {
+    ) external onlyAgentOwner whenNotPaused validCID(newCID) {
         string memory oldCID = s_agents[msg.sender].agentCardCID;
 
         // Remove old capabilities
@@ -125,6 +198,29 @@ contract AgentIdentityRegistry {
         _addCapabilities(msg.sender, newCapabilityTags);
 
         emit AgentCardUpdated(msg.sender, oldCID, newCID, newCapabilityTags);
+    }
+
+    /**
+     * @dev Deregister the caller as an agent (key rotation / leaving the registry).
+     */
+    function deregisterAgent() external onlyAgentOwner whenNotPaused {
+        address agent = msg.sender;
+
+        _removeAllCapabilities(agent);
+
+        uint256 index = s_agentIndexInRegistry[agent];
+        uint256 lastIndex = s_registeredAgents.length - 1;
+        if (index != lastIndex) {
+            address lastAgent = s_registeredAgents[lastIndex];
+            s_registeredAgents[index] = lastAgent;
+            s_agentIndexInRegistry[lastAgent] = index;
+        }
+        s_registeredAgents.pop();
+        delete s_agentIndexInRegistry[agent];
+
+        delete s_agents[agent];
+
+        emit AgentDeregistered(agent);
     }
 
     /**
@@ -155,26 +251,25 @@ contract AgentIdentityRegistry {
             return (new address[](0), 0);
         }
 
-        // Temporary array for collecting unique agents
+        bool[] memory seen = new bool[](s_registeredAgents.length);
         address[] memory tempAgents = new address[](maxAgents);
         uint256 uniqueCount = 0;
 
         for (uint256 i = 0; i < capabilityTags.length; i++) {
-            address[] storage agentsWithCapability = s_capabilityToAgents[capabilityTags[i]];
+            address[] storage agentsWithCapability = s_capabilityToAgents[
+                capabilityTags[i]
+            ];
 
             for (uint256 j = 0; j < agentsWithCapability.length; j++) {
                 address agent = agentsWithCapability[j];
 
-                // Check if agent is already added
-                bool alreadyAdded = false;
-                for (uint256 k = 0; k < uniqueCount; k++) {
-                    if (tempAgents[k] == agent) {
-                        alreadyAdded = true;
-                        break;
-                    }
+                if (!s_agents[agent].isRegistered) {
+                    continue;
                 }
 
-                if (!alreadyAdded) {
+                uint256 regIdx = s_agentIndexInRegistry[agent];
+                if (!seen[regIdx]) {
+                    seen[regIdx] = true;
                     tempAgents[uniqueCount] = agent;
                     uniqueCount++;
                 }
@@ -210,7 +305,7 @@ contract AgentIdentityRegistry {
      */
     function getAgentCard(
         address agent
-    ) external view returns (string memory) {
+    ) external view nonZeroAddress(agent) returns (string memory) {
         if (!s_agents[agent].isRegistered) {
             revert AgentNotRegistered(agent);
         }
@@ -224,7 +319,7 @@ contract AgentIdentityRegistry {
      */
     function getAgentCapabilities(
         address agent
-    ) external view returns (string[] memory) {
+    ) external view nonZeroAddress(agent) returns (string[] memory) {
         if (!s_agents[agent].isRegistered) {
             revert AgentNotRegistered(agent);
         }
@@ -236,19 +331,33 @@ contract AgentIdentityRegistry {
      * @param agent The address of the agent
      * @return True if the agent is registered, false otherwise
      */
-    function isAgentRegistered(address agent) external view returns (bool) {
+    function isAgentRegistered(
+        address agent
+    ) external view nonZeroAddress(agent) returns (bool) {
         return s_agents[agent].isRegistered;
     }
 
     /**
-     * @dev Get all agents with a specific capability
-     * @param capability The capability tag to search for
-     * @return An array of agent addresses with the specified capability
+     * @dev Get agents with a capability, paginated
+     * @param offset Starting index
+     * @param limit Max items (0 = all remaining)
      */
     function getAgentsByCapability(
-        string calldata capability
-    ) external view returns (address[] memory) {
-        return s_capabilityToAgents[capability];
+        string calldata capability,
+        uint256 offset,
+        uint256 limit
+    ) external view returns (address[] memory page, uint256 total) {
+        address[] storage list = s_capabilityToAgents[capability];
+        total = list.length;
+        if (offset >= total) {
+            return (new address[](0), total);
+        }
+        uint256 remaining = total - offset;
+        uint256 count = (limit == 0 || limit > remaining) ? remaining : limit;
+        page = new address[](count);
+        for (uint256 i = 0; i < count; i++) {
+            page[i] = list[offset + i];
+        }
     }
 
     /**
@@ -260,11 +369,42 @@ contract AgentIdentityRegistry {
     }
 
     /**
-     * @dev Get all registered agent addresses
-     * @return An array of all registered agent addresses
+     * @dev Paginated list of all registered agent addresses
+     * @param offset Starting index
+     * @param limit Max items (0 = all remaining)
      */
-    function getAllRegisteredAgents() external view returns (address[] memory) {
-        return s_registeredAgents;
+    function getAllRegisteredAgents(
+        uint256 offset,
+        uint256 limit
+    ) external view returns (address[] memory page, uint256 total) {
+        total = s_registeredAgents.length;
+        if (offset >= total) {
+            return (new address[](0), total);
+        }
+        uint256 remaining = total - offset;
+        uint256 count = (limit == 0 || limit > remaining) ? remaining : limit;
+        page = new address[](count);
+        for (uint256 i = 0; i < count; i++) {
+            page[i] = s_registeredAgents[offset + i];
+        }
+    }
+
+    function adminRemoveAgent(
+        address agent
+    ) external onlyOwner nonZeroAddress(agent) {
+        if (!s_agents[agent].isRegistered) revert AgentNotRegistered(agent);
+        _removeAllCapabilities(agent);
+        uint256 idx = s_agentIndexInRegistry[agent];
+        uint256 last = s_registeredAgents.length - 1;
+        if (idx != last) {
+            address lastAgent = s_registeredAgents[last];
+            s_registeredAgents[idx] = lastAgent;
+            s_agentIndexInRegistry[lastAgent] = idx;
+        }
+        s_registeredAgents.pop();
+        delete s_agentIndexInRegistry[agent];
+        delete s_agents[agent];
+        emit AgentDeregistered(agent);
     }
 
     /**
@@ -276,11 +416,33 @@ contract AgentIdentityRegistry {
     function agentHasCapability(
         address agent,
         string calldata capability
-    ) external view returns (bool) {
+    ) external view nonZeroAddress(agent) returns (bool) {
         return s_agentHasCapability[agent][capability];
     }
 
     // Internal Functions
+
+    /**
+     * @dev Counts capability strings that would be newly added (non-empty, not duplicate, within tag length).
+     */
+    function _countNewCapabilities(
+        address agent,
+        string[] calldata capabilities
+    ) internal view returns (uint256 count) {
+        for (uint256 i = 0; i < capabilities.length; i++) {
+            string calldata capability = capabilities[i];
+            if (bytes(capability).length == 0) {
+                continue;
+            }
+            if (bytes(capability).length > MAX_TAG_LENGTH) {
+                revert TagTooLong();
+            }
+            if (s_agentHasCapability[agent][capability]) {
+                continue;
+            }
+            count++;
+        }
+    }
 
     /**
      * @dev Add capability tags to an agent and update the capability index
@@ -291,12 +453,21 @@ contract AgentIdentityRegistry {
         address agent,
         string[] calldata capabilities
     ) internal {
+        uint256 current = s_agents[agent].capabilityTags.length;
+        uint256 toAdd = _countNewCapabilities(agent, capabilities);
+        if (current + toAdd > MAX_CAPABILITIES) {
+            revert TooManyCapabilities();
+        }
+
         for (uint256 i = 0; i < capabilities.length; i++) {
             string calldata capability = capabilities[i];
 
             // skip the empty capabilities
             if (bytes(capability).length == 0) {
                 continue;
+            }
+            if (bytes(capability).length > MAX_TAG_LENGTH) {
+                revert TagTooLong();
             }
 
             // skip if agent already have the capability
@@ -308,7 +479,9 @@ contract AgentIdentityRegistry {
             s_agents[agent].capabilityTags.push(capability);
 
             // index for efficient lookup
-            s_agentIndexInCapability[capability][agent] = s_capabilityToAgents[capability].length;
+            s_agentIndexInCapability[capability][agent] = s_capabilityToAgents[
+                capability
+            ].length;
             s_capabilityToAgents[capability].push(agent);
             s_agentHasCapability[agent][capability] = true;
 
@@ -317,8 +490,7 @@ contract AgentIdentityRegistry {
     }
 
     /**
-     * @dev Remove all capability tags from an agent
-     * @param agent The address of the agent
+     * @dev Remove all capability tags from an agent using swap-and-pop on per-tag agent lists.
      */
     function _removeAllCapabilities(address agent) internal {
         string[] memory capabilities = s_agents[agent].capabilityTags;
@@ -338,7 +510,7 @@ contract AgentIdentityRegistry {
 
             s_capabilityToAgents[capability].pop();
             delete s_agentIndexInCapability[capability][agent];
-            s_agentHasCapability[agent][capability] = false;
+            delete s_agentHasCapability[agent][capability];
 
             emit CapabilityRemoved(agent, capability);
         }

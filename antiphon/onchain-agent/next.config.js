@@ -1,7 +1,18 @@
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   // Required for Docker standalone output (Railway / Autonome deployment)
   output: "standalone",
+
+  // Pin Turbopack root to this directory so lockfiles in parent dirs are ignored.
+  // (production builds use --webpack, so this only affects dev mode)
+  turbopack: {
+    root: __dirname,
+  },
 
   // Allow large file uploads in API routes
   experimental: {
