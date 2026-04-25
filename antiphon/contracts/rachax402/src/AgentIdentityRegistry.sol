@@ -1,10 +1,21 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.34;
 
+interface IAgentReputationRegistry {
+    function freezeReputation(address agent) external;
+}
+
+/// @dev Minimal surface used for EIP-165 `interfaceId` (must match `IAgentIdentityRegistry` in `AgentReputationRegistry.sol`).
+interface IAgentIdentityRegistryLookup {
+    function isAgentRegistered(address agent) external view returns (bool);
+}
+
 /**
  * @title AgentIdentityRegistry Contract
  * @author Rachax402
  * @dev Allows agents to register with their agent card CIDs and enables discovery by capability tags
+ * @notice Base mainnet: set non-zero `registrationFeeWei`, treasury `feeRecipient`, then `setReputationRegistry`
+ *         after deploying `AgentReputationRegistry`. Wire reputation only to the registry that passed constructor checks.
  */
 contract AgentIdentityRegistry {
     // Errors
@@ -20,6 +31,12 @@ contract AgentIdentityRegistry {
     error TooManyCapabilities();
     error NotOwner();
     error EnforcedPause();
+    error IncorrectRegistrationFee(uint256 sent, uint256 required);
+    error FeeTransferFailed();
+    error RegistrationFeeNotConfigured();
+    error DiscoverAgentsRequestTooLarge(uint256 requested, uint256 maxAllowed);
+    error NotPendingOwner();
+    error PendingOwnerAlreadySet(address pendingOwner);
 
     // Type Declarations
     struct AgentInfo {
@@ -32,10 +49,22 @@ contract AgentIdentityRegistry {
     uint256 public constant MAX_CAPABILITIES = 20;
     uint256 public constant MAX_CID_LENGTH = 256;
     uint256 public constant MAX_TAG_LENGTH = 64;
+    uint256 public constant MAX_DISCOVER_AGENTS_CANDIDATES = 2048;
+
+    /// @dev EIP-165: identifier for IERC165 (required for standards-compliant `supportsInterface`).
+    bytes4 private constant IID_IERC165 = 0x01ffc9a7;
 
     // State Variables
     address private s_owner;
+    address private s_pendingOwner;
     bool private s_paused;
+
+    /// @dev ETH required on `registerAgent` (wei). Mitigates cheap Sybil identities when set above zero.
+    uint256 private s_registrationFeeWei;
+
+    /// @dev Receives registration fees (treasury, DAO, or burn address).
+    address private s_feeRecipient;
+    IAgentReputationRegistry private s_reputationRegistry;
 
     /// @dev Mapping from agent address to their info
     mapping(address => AgentInfo) private s_agents;
@@ -75,8 +104,19 @@ contract AgentIdentityRegistry {
         address indexed previousOwner,
         address indexed newOwner
     );
+    event OwnershipTransferStarted(
+        address indexed previousOwner,
+        address indexed pendingOwner
+    );
+    event OwnershipTransferCanceled(
+        address indexed owner,
+        address indexed canceledPendingOwner
+    );
     event Paused(address account);
     event Unpaused(address account);
+    event RegistrationFeeUpdated(uint256 feeWei);
+    event FeeRecipientUpdated(address indexed recipient);
+    event ReputationRegistryUpdated(address indexed reputationRegistry);
 
     // Modifiers
     modifier onlyOwner() {
@@ -119,6 +159,38 @@ contract AgentIdentityRegistry {
 
     constructor() {
         s_owner = msg.sender;
+        s_feeRecipient = msg.sender;
+    }
+
+    function registrationFeeWei() external view returns (uint256) {
+        return s_registrationFeeWei;
+    }
+
+    function feeRecipient() external view returns (address) {
+        return s_feeRecipient;
+    }
+
+    function pendingOwner() external view returns (address) {
+        return s_pendingOwner;
+    }
+
+    function reputationRegistry() external view returns (address) {
+        return address(s_reputationRegistry);
+    }
+
+    function setRegistrationFeeWei(uint256 feeWei) external onlyOwner {
+        s_registrationFeeWei = feeWei;
+        emit RegistrationFeeUpdated(feeWei);
+    }
+
+    function setFeeRecipient(address recipient) external onlyOwner nonZeroAddress(recipient) {
+        s_feeRecipient = recipient;
+        emit FeeRecipientUpdated(recipient);
+    }
+
+    function setReputationRegistry(address reputationRegistry_) external onlyOwner nonZeroAddress(reputationRegistry_) {
+        s_reputationRegistry = IAgentReputationRegistry(reputationRegistry_);
+        emit ReputationRegistryUpdated(reputationRegistry_);
     }
 
     // External Functions
@@ -136,9 +208,28 @@ contract AgentIdentityRegistry {
     function transferOwnership(
         address newOwner
     ) external onlyOwner nonZeroAddress(newOwner) {
+        if (s_pendingOwner == newOwner) {
+            revert PendingOwnerAlreadySet(newOwner);
+        }
+        s_pendingOwner = newOwner;
+        emit OwnershipTransferStarted(s_owner, newOwner);
+    }
+
+    function acceptOwnership() external {
+        address pending = s_pendingOwner;
+        if (msg.sender != pending) {
+            revert NotPendingOwner();
+        }
         address previous = s_owner;
-        s_owner = newOwner;
-        emit OwnershipTransferred(previous, newOwner);
+        s_owner = pending;
+        delete s_pendingOwner;
+        emit OwnershipTransferred(previous, pending);
+    }
+
+    function cancelOwnershipTransfer() external onlyOwner {
+        address canceled = s_pendingOwner;
+        delete s_pendingOwner;
+        emit OwnershipTransferCanceled(msg.sender, canceled);
     }
 
     function owner() external view returns (address) {
@@ -157,7 +248,13 @@ contract AgentIdentityRegistry {
     function registerAgent(
         string calldata agentCardCID,
         string[] calldata capabilityTags
-    ) external whenNotPaused validCID(agentCardCID) {
+    ) external payable whenNotPaused validCID(agentCardCID) {
+        if (s_registrationFeeWei == 0) {
+            revert RegistrationFeeNotConfigured();
+        }
+        if (msg.value != s_registrationFeeWei) {
+            revert IncorrectRegistrationFee(msg.value, s_registrationFeeWei);
+        }
         if (s_agents[msg.sender].isRegistered) {
             revert AgentAlreadyRegistered(msg.sender);
         }
@@ -172,6 +269,13 @@ contract AgentIdentityRegistry {
 
         // index capability tags
         _addCapabilities(msg.sender, capabilityTags);
+
+        if (msg.value != 0) {
+            (bool sent, ) = payable(s_feeRecipient).call{value: msg.value}("");
+            if (!sent) {
+                revert FeeTransferFailed();
+            }
+        }
 
         emit AgentRegistered(msg.sender, agentCardCID, capabilityTags);
     }
@@ -205,6 +309,7 @@ contract AgentIdentityRegistry {
      */
     function deregisterAgent() external onlyAgentOwner whenNotPaused {
         address agent = msg.sender;
+        _freezeReputationIfConfigured(agent);
 
         _removeAllCapabilities(agent);
 
@@ -225,6 +330,8 @@ contract AgentIdentityRegistry {
 
     /**
      * @dev discoverAgents discover agents matching any of the provided capability tags with pagination
+     * @notice Reverts when the candidate set implied by queried tags exceeds MAX_DISCOVER_AGENTS_CANDIDATES.
+     *         This keeps worst-case memory/gas bounded for on-chain callers.
      * @param capabilityTags An array of capability tags to search for agents
      * @param offset The starting index for pagination
      * @param limit Maximum number of results to return (0 for all remaining)
@@ -245,6 +352,12 @@ contract AgentIdentityRegistry {
         uint256 maxAgents = 0;
         for (uint256 i = 0; i < capabilityTags.length; i++) {
             maxAgents += s_capabilityToAgents[capabilityTags[i]].length;
+            if (maxAgents > MAX_DISCOVER_AGENTS_CANDIDATES) {
+                revert DiscoverAgentsRequestTooLarge(
+                    maxAgents,
+                    MAX_DISCOVER_AGENTS_CANDIDATES
+                );
+            }
         }
 
         if (maxAgents == 0) {
@@ -393,6 +506,7 @@ contract AgentIdentityRegistry {
         address agent
     ) external onlyOwner nonZeroAddress(agent) {
         if (!s_agents[agent].isRegistered) revert AgentNotRegistered(agent);
+        _freezeReputationIfConfigured(agent);
         _removeAllCapabilities(agent);
         uint256 idx = s_agentIndexInRegistry[agent];
         uint256 last = s_registeredAgents.length - 1;
@@ -418,6 +532,17 @@ contract AgentIdentityRegistry {
         string calldata capability
     ) external view nonZeroAddress(agent) returns (bool) {
         return s_agentHasCapability[agent][capability];
+    }
+
+    /**
+     * @dev EIP-165. Lets `AgentReputationRegistry` verify this address is the expected identity registry at deploy time.
+     * @return true for IERC165, this registry's agent-lookup interface id, and false for the reserved invalid id.
+     */
+    function supportsInterface(bytes4 interfaceId) external pure returns (bool) {
+        if (interfaceId == 0xffffffff) {
+            return false;
+        }
+        return interfaceId == IID_IERC165 || interfaceId == type(IAgentIdentityRegistryLookup).interfaceId;
     }
 
     // Internal Functions
@@ -517,5 +642,12 @@ contract AgentIdentityRegistry {
 
         // Clear agent's capabilities array
         delete s_agents[agent].capabilityTags;
+    }
+
+    function _freezeReputationIfConfigured(address agent) internal {
+        IAgentReputationRegistry rep = s_reputationRegistry;
+        if (address(rep) != address(0)) {
+            rep.freezeReputation(agent);
+        }
     }
 }

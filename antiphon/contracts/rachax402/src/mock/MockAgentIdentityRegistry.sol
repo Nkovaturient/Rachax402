@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.34;
 
+interface IAgentIdentityRegistryLookupMock {
+    function isAgentRegistered(address agent) external view returns (bool);
+}
+
 contract MockAgentIdentityRegistry {
     error AgentAlreadyRegistered(address agent);
     error AgentNotRegistered(address agent);
@@ -43,7 +47,7 @@ contract MockAgentIdentityRegistry {
     function registerAgent(
         string calldata agentCardCID,
         string[] calldata capabilityTags
-    ) external validCID(agentCardCID) {
+    ) external payable validCID(agentCardCID) {
         if (s_agents[msg.sender].isRegistered) {
             revert AgentAlreadyRegistered(msg.sender);
         }
@@ -106,6 +110,13 @@ contract MockAgentIdentityRegistry {
 
     function agentHasCapability(address agent, string calldata capability) external view returns (bool) {
         return s_agentHasCapability[agent][capability];
+    }
+
+    function supportsInterface(bytes4 interfaceId) external pure returns (bool) {
+        if (interfaceId == 0xffffffff) {
+            return false;
+        }
+        return interfaceId == 0x01ffc9a7 || interfaceId == type(IAgentIdentityRegistryLookupMock).interfaceId;
     }
 
     function _addCapabilities(address agent, string[] calldata capabilities) internal {

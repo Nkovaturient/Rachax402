@@ -5,11 +5,19 @@ interface IAgentIdentityRegistry {
     function isAgentRegistered(address agent) external view returns (bool);
 }
 
+/// @dev Minimal ERC-165 surface for deploy-time verification of `identityRegistry`.
+interface IERC165 {
+    function supportsInterface(bytes4 interfaceId) external view returns (bool);
+}
+
 /**
  * @title AgentReputationRegistry Contract
  * @author Rachax402
  * @dev Contract for storing ratings and calculating reputation scores for agents.
  *      Upgradability (e.g. UUPS) can be added via a proxy wrapper without changing core logic here.
+ * @notice Base mainnet: deploy `AgentIdentityRegistry` first (fee + recipient configured), then deploy this
+ *         contract with that address. Constructor rejects EOAs, non-ERC-165 contracts, wrong interface id,
+ *         and ABI-incompatible registries. Owner must set `minRaterStakeWei` > 0 before ratings accept.
  */
 contract AgentReputationRegistry {
     // Errors
@@ -28,6 +36,24 @@ contract AgentReputationRegistry {
     error InvalidRatingIndex();
     error CIDTooLong();
     error CommentTooLong();
+    error InsufficientRaterStake(address rater, uint256 currentStake, uint256 required);
+    error WithdrawAmountExceedsBalance(uint256 requested, uint256 available);
+    error WithdrawTransferFailed();
+    error ZeroWithdrawAmount();
+    error MinRaterStakeNotConfigured();
+    error NotPendingOwner();
+    error PendingOwnerAlreadySet(address pendingOwner);
+    error ReputationFrozen(address agent);
+    error CallerNotIdentityRegistry(address caller);
+    error InvalidIdentityRegistryContract(address identityRegistry);
+    error IdentityRegistryProbeFailed(address identityRegistry);
+    error IdentityRegistryInterfaceUnsupported(address identityRegistry);
+    error InvalidMaxUniqueRatersPerPeriod();
+    error TargetPeriodRaterCapReached(
+        address targetAgent,
+        uint256 periodId,
+        uint256 maxUniqueRaters
+    );
 
     // Type Declarations
     struct Rating {
@@ -50,11 +76,13 @@ contract AgentReputationRegistry {
     uint256 public constant RATE_LIMIT_PERIOD = 1 days;
     uint256 public constant MAX_CID_LENGTH = 256;
     uint256 public constant MAX_COMMENT_LENGTH = 512;
+    uint256 public constant DEFAULT_MAX_UNIQUE_RATERS_PER_PERIOD = 10;
 
     // State Variables
     IAgentIdentityRegistry private immutable IDENTITY_REGISTRY;
 
     address private s_owner;
+    address private s_pendingOwner;
     bool private s_paused;
 
     mapping(address => AgentReputation) private s_agentReputations;
@@ -72,6 +100,18 @@ contract AgentReputationRegistry {
     mapping(address => bool) private s_hasBeenRated;
     mapping(address => uint256) private s_ratedAgentIndex;
 
+    /// @dev ETH locked by raters; posting reputation requires balance at least `minRaterStakeWei`.
+    mapping(address => uint256) private s_raterStake;
+
+    /// @dev Minimum rater stake to call `postReputation` (owner-configurable).
+    uint256 private s_minRaterStakeWei;
+    mapping(address => bool) private s_frozenReputation;
+    uint256 private s_maxUniqueRatersPerTargetPeriod;
+    mapping(address => mapping(uint256 => uint256))
+        private s_targetUniqueRaterCountByPeriod;
+    mapping(address => mapping(uint256 => mapping(address => bool)))
+        private s_targetRaterSeenByPeriod;
+
     // Events
     event ReputationPosted(
         address indexed targetAgent,
@@ -83,10 +123,19 @@ contract AgentReputationRegistry {
     );
 
     event FirstRatingReceived(address indexed agent);
+    event RatingMoved(address indexed targetAgent, uint256 fromIndex, uint256 toIndex);
     event RatingRemoved(address indexed targetAgent, uint256 ratingIndex, address indexed removedBy);
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+    event OwnershipTransferStarted(address indexed previousOwner, address indexed pendingOwner);
+    event OwnershipTransferCanceled(address indexed owner, address indexed canceledPendingOwner);
     event Paused(address account);
     event Unpaused(address account);
+    event RaterStakeDeposited(address indexed rater, uint256 amount, uint256 newBalance);
+    event RaterStakeWithdrawn(address indexed rater, uint256 amount, uint256 newBalance);
+    event MinRaterStakeUpdated(uint256 minStakeWei);
+    event ReputationFrozenForIdentity(address indexed agent);
+    event ReputationUnfrozen(address indexed agent);
+    event MaxUniqueRatersPerTargetPeriodUpdated(uint256 maxUniqueRatersPerPeriod);
 
     modifier onlyOwner() {
         if (msg.sender != s_owner) {
@@ -119,12 +168,22 @@ contract AgentReputationRegistry {
         if (!IDENTITY_REGISTRY.isAgentRegistered(targetAgent)) {
             revert TargetNotRegistered(targetAgent);
         }
+        if (s_frozenReputation[targetAgent]) {
+            revert ReputationFrozen(targetAgent);
+        }
         _;
     }
 
-    modifier onlyRegisteredRater() {
+    modifier onlyEligibleRater() {
         if (!IDENTITY_REGISTRY.isAgentRegistered(msg.sender)) {
             revert RaterNotRegistered(msg.sender);
+        }
+        if (s_minRaterStakeWei == 0) {
+            revert MinRaterStakeNotConfigured();
+        }
+        uint256 stake = s_raterStake[msg.sender];
+        if (stake < s_minRaterStakeWei) {
+            revert InsufficientRaterStake(msg.sender, stake, s_minRaterStakeWei);
         }
         _;
     }
@@ -148,12 +207,39 @@ contract AgentReputationRegistry {
         _;
     }
 
-    constructor(address identityRegistry) {
-        if (identityRegistry == address(0)) {
+    constructor(address identityRegistry_) {
+        if (identityRegistry_ == address(0)) {
             revert InvalidIdentityRegistry();
         }
-        IDENTITY_REGISTRY = IAgentIdentityRegistry(identityRegistry);
+        if (identityRegistry_.code.length == 0) {
+            revert InvalidIdentityRegistryContract(identityRegistry_);
+        }
+        // ERC-165: registry must declare IERC165 and `IAgentIdentityRegistry` (same id as `type(IAgentIdentityRegistry).interfaceId`).
+        try IERC165(identityRegistry_).supportsInterface(0x01ffc9a7) returns (bool ok165) {
+            if (!ok165) {
+                revert IdentityRegistryInterfaceUnsupported(identityRegistry_);
+            }
+        } catch {
+            revert IdentityRegistryProbeFailed(identityRegistry_);
+        }
+        try IERC165(identityRegistry_).supportsInterface(type(IAgentIdentityRegistry).interfaceId) returns (
+            bool okAgentIface
+        ) {
+            if (!okAgentIface) {
+                revert IdentityRegistryInterfaceUnsupported(identityRegistry_);
+            }
+        } catch {
+            revert IdentityRegistryProbeFailed(identityRegistry_);
+        }
+        // ABI probe: must implement `isAgentRegistered` without revert for a normal address argument.
+        try IAgentIdentityRegistry(identityRegistry_).isAgentRegistered(address(this)) returns (
+            bool
+        ) {} catch {
+            revert IdentityRegistryProbeFailed(identityRegistry_);
+        }
+        IDENTITY_REGISTRY = IAgentIdentityRegistry(identityRegistry_);
         s_owner = msg.sender;
+        s_maxUniqueRatersPerTargetPeriod = DEFAULT_MAX_UNIQUE_RATERS_PER_PERIOD;
     }
 
     function identityRegistry() external view returns (address) {
@@ -171,23 +257,100 @@ contract AgentReputationRegistry {
     }
 
     function transferOwnership(address newOwner) external onlyOwner nonZeroAddress(newOwner) {
+        if (s_pendingOwner == newOwner) {
+            revert PendingOwnerAlreadySet(newOwner);
+        }
+        s_pendingOwner = newOwner;
+        emit OwnershipTransferStarted(s_owner, newOwner);
+    }
+
+    function acceptOwnership() external {
+        address pending = s_pendingOwner;
+        if (msg.sender != pending) {
+            revert NotPendingOwner();
+        }
         address previous = s_owner;
-        s_owner = newOwner;
-        emit OwnershipTransferred(previous, newOwner);
+        s_owner = pending;
+        delete s_pendingOwner;
+        emit OwnershipTransferred(previous, pending);
+    }
+
+    function cancelOwnershipTransfer() external onlyOwner {
+        address canceled = s_pendingOwner;
+        delete s_pendingOwner;
+        emit OwnershipTransferCanceled(msg.sender, canceled);
     }
 
     function owner() external view returns (address) {
         return s_owner;
     }
 
+    function pendingOwner() external view returns (address) {
+        return s_pendingOwner;
+    }
+
     function paused() external view returns (bool) {
         return s_paused;
+    }
+
+    function minRaterStakeWei() external view returns (uint256) {
+        return s_minRaterStakeWei;
+    }
+
+    function maxUniqueRatersPerTargetPeriod() external view returns (uint256) {
+        return s_maxUniqueRatersPerTargetPeriod;
+    }
+
+    function raterStake(address rater) external view returns (uint256) {
+        return s_raterStake[rater];
+    }
+
+    function setMinRaterStakeWei(uint256 minStakeWei) external onlyOwner {
+        s_minRaterStakeWei = minStakeWei;
+        emit MinRaterStakeUpdated(minStakeWei);
+    }
+
+    function setMaxUniqueRatersPerTargetPeriod(
+        uint256 maxUniqueRatersPerPeriod
+    ) external onlyOwner {
+        if (maxUniqueRatersPerPeriod == 0) {
+            revert InvalidMaxUniqueRatersPerPeriod();
+        }
+        s_maxUniqueRatersPerTargetPeriod = maxUniqueRatersPerPeriod;
+        emit MaxUniqueRatersPerTargetPeriodUpdated(maxUniqueRatersPerPeriod);
+    }
+
+    /**
+     * @dev Lock ETH to gain eligibility to rate when a minimum stake is configured. Withdrawable anytime.
+     */
+    function depositRaterStake() external payable whenNotPaused {
+        s_raterStake[msg.sender] += msg.value;
+        emit RaterStakeDeposited(msg.sender, msg.value, s_raterStake[msg.sender]);
+    }
+
+    function withdrawRaterStake(uint256 amount) external whenNotPaused {
+        if (amount == 0) {
+            revert ZeroWithdrawAmount();
+        }
+        uint256 bal = s_raterStake[msg.sender];
+        if (amount > bal) {
+            revert WithdrawAmountExceedsBalance(amount, bal);
+        }
+        s_raterStake[msg.sender] = bal - amount;
+        emit RaterStakeWithdrawn(msg.sender, amount, s_raterStake[msg.sender]);
+        (bool ok, ) = payable(msg.sender).call{value: amount}("");
+        if (!ok) {
+            revert WithdrawTransferFailed();
+        }
     }
 
     /**
      * @dev Remove a rating by index (swap-and-pop). Intended for spam / abuse response.
      */
     function removeRating(address targetAgent, uint256 ratingIndex) external onlyOwner nonZeroAddress(targetAgent) {
+        if (s_frozenReputation[targetAgent]) {
+            revert ReputationFrozen(targetAgent);
+        }
         Rating[] storage ratings = s_agentRatings[targetAgent];
         if (ratingIndex >= ratings.length) {
             revert InvalidRatingIndex();
@@ -203,6 +366,7 @@ contract AgentReputationRegistry {
         uint256 last = ratings.length - 1;
         if (ratingIndex != last) {
             ratings[ratingIndex] = ratings[last];
+            emit RatingMoved(targetAgent, last, ratingIndex);
         }
         ratings.pop();
 
@@ -213,6 +377,27 @@ contract AgentReputationRegistry {
         }
 
         emit RatingRemoved(targetAgent, ratingIndex, msg.sender);
+    }
+
+    /**
+     * @dev Called by identity registry when an identity is deregistered/removed.
+     *      Historical reputation remains stored but is flagged and excluded from active use.
+     */
+    function freezeReputation(address agent) external nonZeroAddress(agent) {
+        if (msg.sender != address(IDENTITY_REGISTRY)) {
+            revert CallerNotIdentityRegistry(msg.sender);
+        }
+        if (!s_frozenReputation[agent]) {
+            s_frozenReputation[agent] = true;
+            emit ReputationFrozenForIdentity(agent);
+        }
+    }
+
+    function unfreezeReputation(address agent) external onlyOwner nonZeroAddress(agent) {
+        if (s_frozenReputation[agent]) {
+            s_frozenReputation[agent] = false;
+            emit ReputationUnfrozen(agent);
+        }
     }
 
     /**
@@ -230,7 +415,7 @@ contract AgentReputationRegistry {
     )
         external
         whenNotPaused
-        onlyRegisteredRater
+        onlyEligibleRater
         validTarget(targetAgent)
         validRating(rating)
         rateLimitCheck(targetAgent)
@@ -243,6 +428,7 @@ contract AgentReputationRegistry {
         }
 
         s_lastRatingTime[msg.sender][targetAgent] = block.timestamp;
+        _enforceAndMarkTargetPeriodRater(targetAgent, msg.sender);
 
         // Create new rating
         Rating memory newRating = Rating({
@@ -290,6 +476,9 @@ contract AgentReputationRegistry {
     function getReputationScore(
         address agent
     ) external view nonZeroAddress(agent) returns (uint256 score, uint256 totalRatings) {
+        if (s_frozenReputation[agent]) {
+            return (0, 0);
+        }
         AgentReputation storage rep = s_agentReputations[agent];
         totalRatings = rep.totalRatings;
 
@@ -378,6 +567,13 @@ contract AgentReputationRegistry {
         address rater,
         address targetAgent
     ) external view nonZeroAddress(rater) nonZeroAddress(targetAgent) returns (bool, uint256 nextAllowedTime) {
+        if (!IDENTITY_REGISTRY.isAgentRegistered(rater)) {
+            return (false, 0);
+        }
+        if (s_raterStake[rater] < s_minRaterStakeWei) {
+            return (false, 0);
+        }
+
         uint256 lastRating = s_lastRatingTime[rater][targetAgent];
 
         if (lastRating == 0) {
@@ -402,6 +598,10 @@ contract AgentReputationRegistry {
         return s_hasBeenRated[agent];
     }
 
+    function isReputationFrozen(address agent) external view nonZeroAddress(agent) returns (bool) {
+        return s_frozenReputation[agent];
+    }
+
     /**
      * @dev Clears rated-agent bookkeeping when the last rating for an agent is removed.
      */
@@ -416,5 +616,24 @@ contract AgentReputationRegistry {
         s_ratedAgents.pop();
         delete s_ratedAgentIndex[targetAgent];
         s_hasBeenRated[targetAgent] = false;
+    }
+
+    function _enforceAndMarkTargetPeriodRater(
+        address targetAgent,
+        address rater
+    ) internal {
+        uint256 periodId = block.timestamp / RATE_LIMIT_PERIOD;
+        if (!s_targetRaterSeenByPeriod[targetAgent][periodId][rater]) {
+            uint256 used = s_targetUniqueRaterCountByPeriod[targetAgent][periodId];
+            if (used >= s_maxUniqueRatersPerTargetPeriod) {
+                revert TargetPeriodRaterCapReached(
+                    targetAgent,
+                    periodId,
+                    s_maxUniqueRatersPerTargetPeriod
+                );
+            }
+            s_targetRaterSeenByPeriod[targetAgent][periodId][rater] = true;
+            s_targetUniqueRaterCountByPeriod[targetAgent][periodId] = used + 1;
+        }
     }
 }

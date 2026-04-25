@@ -7,6 +7,7 @@ import {AgentIdentityRegistry} from "../../src/AgentIdentityRegistry.sol";
 
 contract AgentIdentityRegistryTest is Test {
     AgentIdentityRegistry public registry;
+    uint256 internal constant REGISTRATION_FEE = 0.01 ether;
 
     // Test addresses
     address public agentA;
@@ -44,6 +45,8 @@ contract AgentIdentityRegistryTest is Test {
 
     function setUp() public {
         registry = new AgentIdentityRegistry();
+        registry.setFeeRecipient(makeAddr("treasury"));
+        registry.setRegistrationFeeWei(REGISTRATION_FEE);
 
         // Setup test addresses
         agentA = makeAddr("agentA");
@@ -69,11 +72,16 @@ contract AgentIdentityRegistryTest is Test {
         emptyCapabilities = new string[](0);
     }
 
+    function _register(address agent, string memory cid, string[] memory caps) internal {
+        vm.deal(agent, 1 ether);
+        vm.prank(agent);
+        registry.registerAgent{value: REGISTRATION_FEE}(cid, caps);
+    }
+
     // registerAgent Tests
 
     function test_RegisterAgent_Success() public {
-        vm.prank(agentA);
-        registry.registerAgent(CID_A, capabilitiesA);
+        _register(agentA, CID_A, capabilitiesA);
 
         assertTrue(registry.isAgentRegistered(agentA));
         assertEq(registry.getAgentCard(agentA), CID_A);
@@ -81,11 +89,21 @@ contract AgentIdentityRegistryTest is Test {
     }
 
     function test_RegisterAgent_EmitsEvent() public {
-        vm.expectEmit(true, false, false, true);
-        emit AgentRegistered(agentA, CID_A, capabilitiesA);
-
+        vm.recordLogs();
+        vm.deal(agentA, 1 ether);
         vm.prank(agentA);
-        registry.registerAgent(CID_A, capabilitiesA);
+        registry.registerAgent{value: REGISTRATION_FEE}(CID_A, capabilitiesA);
+
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 topic = keccak256("AgentRegistered(address,string,string[])");
+        bool found;
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics.length > 0 && logs[i].topics[0] == topic) {
+                found = true;
+                break;
+            }
+        }
+        assertTrue(found);
     }
 
     function test_RegisterAgent_EmitsCapabilityAddedEvents() public {
@@ -95,21 +113,20 @@ contract AgentIdentityRegistryTest is Test {
         vm.expectEmit(true, false, false, true);
         emit CapabilityAdded(agentA, "statistics");
 
+        vm.deal(agentA, 1 ether);
         vm.prank(agentA);
-        registry.registerAgent(CID_A, capabilitiesA);
+        registry.registerAgent{value: REGISTRATION_FEE}(CID_A, capabilitiesA);
     }
 
     function test_RegisterAgent_WithEmptyCapabilities() public {
-        vm.prank(agentA);
-        registry.registerAgent(CID_A, emptyCapabilities);
+        _register(agentA, CID_A, emptyCapabilities);
 
         assertTrue(registry.isAgentRegistered(agentA));
         assertEq(registry.getAgentCapabilities(agentA).length, 0);
     }
 
     function test_RegisterAgent_RevertIfAlreadyRegistered() public {
-        vm.prank(agentA);
-        registry.registerAgent(CID_A, capabilitiesA);
+        _register(agentA, CID_A, capabilitiesA);
 
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -119,25 +136,64 @@ contract AgentIdentityRegistryTest is Test {
         );
 
         vm.prank(agentA);
-        registry.registerAgent(CID_B, capabilitiesB);
+        registry.registerAgent{value: REGISTRATION_FEE}(CID_B, capabilitiesB);
     }
 
     function test_RegisterAgent_RevertIfEmptyCID() public {
         vm.expectRevert(AgentIdentityRegistry.InvalidCID.selector);
 
+        vm.deal(agentA, 1 ether);
         vm.prank(agentA);
-        registry.registerAgent("", capabilitiesA);
+        registry.registerAgent{value: REGISTRATION_FEE}("", capabilitiesA);
     }
 
-    function test_RegisterAgent_MultipleAgents() public {
+    function test_RegisterAgent_RevertIfIncorrectRegistrationFee() public {
+        address treasury = makeAddr("treasury");
+        registry.setFeeRecipient(treasury);
+        registry.setRegistrationFeeWei(1 ether);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                AgentIdentityRegistry.IncorrectRegistrationFee.selector,
+                uint256(0),
+                uint256(1 ether)
+            )
+        );
         vm.prank(agentA);
         registry.registerAgent(CID_A, capabilitiesA);
 
-        vm.prank(agentB);
-        registry.registerAgent(CID_B, capabilitiesB);
+        vm.deal(agentA, 2 ether);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                AgentIdentityRegistry.IncorrectRegistrationFee.selector,
+                uint256(2 ether),
+                uint256(1 ether)
+            )
+        );
+        vm.prank(agentA);
+        registry.registerAgent{value: 2 ether}(CID_A, capabilitiesA);
+    }
 
-        vm.prank(agentC);
-        registry.registerAgent(CID_C, capabilitiesC);
+    function test_RegisterAgent_SuccessWithRegistrationFee() public {
+        address treasury = makeAddr("treasury");
+        registry.setFeeRecipient(treasury);
+        registry.setRegistrationFeeWei(0.01 ether);
+
+        vm.deal(agentA, 1 ether);
+        uint256 balBefore = treasury.balance;
+
+        vm.prank(agentA);
+        registry.registerAgent{value: 0.01 ether}(CID_A, capabilitiesA);
+
+        assertTrue(registry.isAgentRegistered(agentA));
+        assertEq(treasury.balance, balBefore + 0.01 ether);
+        assertEq(registry.registrationFeeWei(), 0.01 ether);
+    }
+
+    function test_RegisterAgent_MultipleAgents() public {
+        _register(agentA, CID_A, capabilitiesA);
+        _register(agentB, CID_B, capabilitiesB);
+        _register(agentC, CID_C, capabilitiesC);
 
         assertEq(registry.getRegisteredAgentsCount(), 3);
 
@@ -152,8 +208,7 @@ contract AgentIdentityRegistryTest is Test {
     // updateAgentCard Tests
 
     function test_UpdateAgentCard_Success() public {
-        vm.prank(agentA);
-        registry.registerAgent(CID_A, capabilitiesA);
+        _register(agentA, CID_A, capabilitiesA);
 
         vm.prank(agentA);
         registry.updateAgentCard(UPDATED_CID, updatedCapabilities);
@@ -167,8 +222,7 @@ contract AgentIdentityRegistryTest is Test {
     }
 
     function test_UpdateAgentCard_EmitsEvent() public {
-        vm.prank(agentA);
-        registry.registerAgent(CID_A, capabilitiesA);
+        _register(agentA, CID_A, capabilitiesA);
 
         vm.expectEmit(true, false, false, true);
         emit AgentCardUpdated(agentA, CID_A, UPDATED_CID, updatedCapabilities);
@@ -178,8 +232,7 @@ contract AgentIdentityRegistryTest is Test {
     }
 
     function test_UpdateAgentCard_RemovesOldCapabilities() public {
-        vm.prank(agentA);
-        registry.registerAgent(CID_A, capabilitiesA);
+        _register(agentA, CID_A, capabilitiesA);
 
         assertTrue(registry.agentHasCapability(agentA, "csv-analysis"));
         assertTrue(registry.agentHasCapability(agentA, "statistics"));
@@ -206,8 +259,7 @@ contract AgentIdentityRegistryTest is Test {
     }
 
     function test_UpdateAgentCard_RevertIfEmptyCID() public {
-        vm.prank(agentA);
-        registry.registerAgent(CID_A, capabilitiesA);
+        _register(agentA, CID_A, capabilitiesA);
 
         vm.expectRevert(AgentIdentityRegistry.InvalidCID.selector);
 
@@ -218,11 +270,8 @@ contract AgentIdentityRegistryTest is Test {
     // ============ discoverAgents Tests ============
 
     function test_DiscoverAgents_SingleCapability() public {
-        vm.prank(agentA);
-        registry.registerAgent(CID_A, capabilitiesA);
-
-        vm.prank(agentB);
-        registry.registerAgent(CID_B, capabilitiesB);
+        _register(agentA, CID_A, capabilitiesA);
+        _register(agentB, CID_B, capabilitiesB);
 
         string[] memory searchTags = new string[](1);
         searchTags[0] = "statistics";
@@ -236,14 +285,9 @@ contract AgentIdentityRegistryTest is Test {
     }
 
     function test_DiscoverAgents_MultipleCapabilities() public {
-        vm.prank(agentA);
-        registry.registerAgent(CID_A, capabilitiesA);
-
-        vm.prank(agentB);
-        registry.registerAgent(CID_B, capabilitiesB);
-
-        vm.prank(agentC);
-        registry.registerAgent(CID_C, capabilitiesC);
+        _register(agentA, CID_A, capabilitiesA);
+        _register(agentB, CID_B, capabilitiesB);
+        _register(agentC, CID_C, capabilitiesC);
 
         string[] memory searchTags = new string[](2);
         searchTags[0] = "csv-analysis";
@@ -256,11 +300,8 @@ contract AgentIdentityRegistryTest is Test {
     }
 
     function test_DiscoverAgents_FetchCIDsSeparately() public {
-        vm.prank(agentA);
-        registry.registerAgent(CID_A, capabilitiesA);
-
-        vm.prank(agentC);
-        registry.registerAgent(CID_C, capabilitiesC);
+        _register(agentA, CID_A, capabilitiesA);
+        _register(agentC, CID_C, capabilitiesC);
 
         string[] memory searchTags = new string[](2);
         searchTags[0] = "csv-analysis";
@@ -281,8 +322,7 @@ contract AgentIdentityRegistryTest is Test {
     }
 
     function test_DiscoverAgents_NoDuplicates() public {
-        vm.prank(agentA);
-        registry.registerAgent(CID_A, capabilitiesA);
+        _register(agentA, CID_A, capabilitiesA);
 
         // Search for both capabilities that agentA has
         string[] memory searchTags = new string[](2);
@@ -298,14 +338,9 @@ contract AgentIdentityRegistryTest is Test {
     }
 
     function test_DiscoverAgents_Pagination() public {
-        vm.prank(agentA);
-        registry.registerAgent(CID_A, capabilitiesA);
-
-        vm.prank(agentB);
-        registry.registerAgent(CID_B, capabilitiesB);
-
-        vm.prank(agentC);
-        registry.registerAgent(CID_C, capabilitiesC);
+        _register(agentA, CID_A, capabilitiesA);
+        _register(agentB, CID_B, capabilitiesB);
+        _register(agentC, CID_C, capabilitiesC);
 
         string[] memory searchTags = new string[](3);
         searchTags[0] = "csv-analysis";
@@ -324,8 +359,7 @@ contract AgentIdentityRegistryTest is Test {
     }
 
     function test_DiscoverAgents_OffsetBeyondTotal() public {
-        vm.prank(agentA);
-        registry.registerAgent(CID_A, capabilitiesA);
+        _register(agentA, CID_A, capabilitiesA);
 
         string[] memory searchTags = new string[](1);
         searchTags[0] = "statistics";
@@ -337,11 +371,8 @@ contract AgentIdentityRegistryTest is Test {
     }
 
     function test_DiscoverAgents_LimitZeroReturnsAll() public {
-        vm.prank(agentA);
-        registry.registerAgent(CID_A, capabilitiesA);
-
-        vm.prank(agentB);
-        registry.registerAgent(CID_B, capabilitiesB);
+        _register(agentA, CID_A, capabilitiesA);
+        _register(agentB, CID_B, capabilitiesB);
 
         string[] memory searchTags = new string[](1);
         searchTags[0] = "statistics";
@@ -353,8 +384,7 @@ contract AgentIdentityRegistryTest is Test {
     }
 
     function test_DiscoverAgents_NoMatches() public {
-        vm.prank(agentA);
-        registry.registerAgent(CID_A, capabilitiesA);
+        _register(agentA, CID_A, capabilitiesA);
 
         string[] memory searchTags = new string[](1);
         searchTags[0] = "non-existent";
@@ -374,8 +404,7 @@ contract AgentIdentityRegistryTest is Test {
     // ============ getAgentCard Tests ============
 
     function test_GetAgentCard_Success() public {
-        vm.prank(agentA);
-        registry.registerAgent(CID_A, capabilitiesA);
+        _register(agentA, CID_A, capabilitiesA);
 
         string memory cid = registry.getAgentCard(agentA);
         assertEq(cid, CID_A);
@@ -395,8 +424,7 @@ contract AgentIdentityRegistryTest is Test {
     // getAgentCapabilities Tests
 
     function test_GetAgentCapabilities_Success() public {
-        vm.prank(agentA);
-        registry.registerAgent(CID_A, capabilitiesA);
+        _register(agentA, CID_A, capabilitiesA);
 
         string[] memory caps = registry.getAgentCapabilities(agentA);
 
@@ -419,11 +447,8 @@ contract AgentIdentityRegistryTest is Test {
     // getAgentsByCapability Tests
 
     function test_GetAgentsByCapability_Success() public {
-        vm.prank(agentA);
-        registry.registerAgent(CID_A, capabilitiesA);
-
-        vm.prank(agentB);
-        registry.registerAgent(CID_B, capabilitiesB);
+        _register(agentA, CID_A, capabilitiesA);
+        _register(agentB, CID_B, capabilitiesB);
 
         (address[] memory statisticsAgents, uint256 t1) = registry.getAgentsByCapability("statistics", 0, 0);
 
@@ -442,16 +467,14 @@ contract AgentIdentityRegistryTest is Test {
     // agentHasCapability Tests
 
     function test_AgentHasCapability_True() public {
-        vm.prank(agentA);
-        registry.registerAgent(CID_A, capabilitiesA);
+        _register(agentA, CID_A, capabilitiesA);
 
         assertTrue(registry.agentHasCapability(agentA, "csv-analysis"));
         assertTrue(registry.agentHasCapability(agentA, "statistics"));
     }
 
     function test_AgentHasCapability_False() public {
-        vm.prank(agentA);
-        registry.registerAgent(CID_A, capabilitiesA);
+        _register(agentA, CID_A, capabilitiesA);
 
         assertFalse(registry.agentHasCapability(agentA, "non-existent"));
         assertFalse(registry.agentHasCapability(agentB, "csv-analysis"));
@@ -460,8 +483,7 @@ contract AgentIdentityRegistryTest is Test {
     // isAgentRegistered Tests
 
     function test_IsAgentRegistered_True() public {
-        vm.prank(agentA);
-        registry.registerAgent(CID_A, capabilitiesA);
+        _register(agentA, CID_A, capabilitiesA);
 
         assertTrue(registry.isAgentRegistered(agentA));
     }
@@ -473,8 +495,7 @@ contract AgentIdentityRegistryTest is Test {
     // Capability Indexing Tests
 
     function test_CapabilityIndexing_AfterUpdate() public {
-        vm.prank(agentA);
-        registry.registerAgent(CID_A, capabilitiesA);
+        _register(agentA, CID_A, capabilitiesA);
 
         // Initially agentA has "statistics"
         (address[] memory beforeUpdate, ) = registry.getAgentsByCapability("statistics", 0, 0);
@@ -499,8 +520,7 @@ contract AgentIdentityRegistryTest is Test {
         capsWithDupes[1] = "csv-analysis"; // duplicate
         capsWithDupes[2] = "statistics";
 
-        vm.prank(agentA);
-        registry.registerAgent(CID_A, capsWithDupes);
+        _register(agentA, CID_A, capsWithDupes);
 
         // Should only have 2 unique capabilities
         string[] memory caps = registry.getAgentCapabilities(agentA);
@@ -517,8 +537,7 @@ contract AgentIdentityRegistryTest is Test {
         capsWithEmpty[1] = ""; // empty
         capsWithEmpty[2] = "statistics";
 
-        vm.prank(agentA);
-        registry.registerAgent(CID_A, capsWithEmpty);
+        _register(agentA, CID_A, capsWithEmpty);
 
         // Should only have 2 capabilities (empty skipped)
         string[] memory caps = registry.getAgentCapabilities(agentA);
@@ -526,8 +545,7 @@ contract AgentIdentityRegistryTest is Test {
     }
 
     function test_DeregisterAgent_Success() public {
-        vm.prank(agentA);
-        registry.registerAgent(CID_A, capabilitiesA);
+        _register(agentA, CID_A, capabilitiesA);
 
         vm.expectEmit(true, false, false, false);
         emit AgentDeregistered(agentA);
@@ -547,16 +565,14 @@ contract AgentIdentityRegistryTest is Test {
 
         vm.expectRevert(AgentIdentityRegistry.TooManyCapabilities.selector);
 
+        vm.deal(agentA, 1 ether);
         vm.prank(agentA);
-        registry.registerAgent(CID_A, many);
+        registry.registerAgent{value: REGISTRATION_FEE}(CID_A, many);
     }
 
     function test_GetAllRegisteredAgents_Pagination() public {
-        vm.prank(agentA);
-        registry.registerAgent(CID_A, capabilitiesA);
-
-        vm.prank(agentB);
-        registry.registerAgent(CID_B, capabilitiesB);
+        _register(agentA, CID_A, capabilitiesA);
+        _register(agentB, CID_B, capabilitiesB);
 
         (address[] memory page, uint256 total) = registry.getAllRegisteredAgents(1, 1);
         assertEq(total, 2);
@@ -583,7 +599,8 @@ contract AgentIdentityRegistryTest is Test {
 
         vm.expectRevert(AgentIdentityRegistry.EnforcedPause.selector);
 
+        vm.deal(agentA, 1 ether);
         vm.prank(agentA);
-        registry.registerAgent(CID_A, capabilitiesA);
+        registry.registerAgent{value: REGISTRATION_FEE}(CID_A, capabilitiesA);
     }
 }

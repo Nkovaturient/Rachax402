@@ -12,6 +12,8 @@ import {AgentReputationRegistry} from "../../src/AgentReputationRegistry.sol";
 contract AgentReputationRegistryFuzzTest is Test {
     AgentIdentityRegistry public identity;
     AgentReputationRegistry public registry;
+    uint256 internal constant REGISTRATION_FEE = 1 wei;
+    uint256 internal constant MIN_STAKE = 1 wei;
 
     address public targetAgent;
     address[] public raters;
@@ -19,7 +21,11 @@ contract AgentReputationRegistryFuzzTest is Test {
 
     function setUp() public {
         identity = new AgentIdentityRegistry();
+        identity.setFeeRecipient(makeAddr("treasury"));
+        identity.setRegistrationFeeWei(REGISTRATION_FEE);
         registry = new AgentReputationRegistry(address(identity));
+        identity.setReputationRegistry(address(registry));
+        registry.setMinRaterStakeWei(MIN_STAKE);
         targetAgent = makeAddr("targetAgent");
         _registerAgent(targetAgent);
 
@@ -27,14 +33,25 @@ contract AgentReputationRegistryFuzzTest is Test {
             address r = makeAddr(string(abi.encodePacked("rater", i)));
             raters.push(r);
             _registerAgent(r);
+            _stakeRater(r);
         }
     }
 
     function _registerAgent(address agent) internal {
         string[] memory caps = new string[](1);
         caps[0] = "fuzz-cap";
+        vm.deal(agent, agent.balance + REGISTRATION_FEE);
         vm.prank(agent);
-        identity.registerAgent("bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi", caps);
+        identity.registerAgent{value: REGISTRATION_FEE}(
+            "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            caps
+        );
+    }
+
+    function _stakeRater(address rater) internal {
+        vm.deal(rater, rater.balance + MIN_STAKE);
+        vm.prank(rater);
+        registry.depositRaterStake{value: MIN_STAKE}();
     }
 
     // ============ Fuzz Tests ============
@@ -45,6 +62,7 @@ contract AgentReputationRegistryFuzzTest is Test {
 
         address rater = makeAddr("fuzzRater");
         _registerAgent(rater);
+        _stakeRater(rater);
 
         vm.prank(rater);
         registry.postReputation(targetAgent, rating, "test", "QmProof");
@@ -63,6 +81,7 @@ contract AgentReputationRegistryFuzzTest is Test {
 
         address rater = makeAddr("invalidRater");
         _registerAgent(rater);
+        _stakeRater(rater);
 
         vm.prank(rater);
         vm.expectRevert(
@@ -116,6 +135,7 @@ contract AgentReputationRegistryFuzzTest is Test {
                 string(abi.encodePacked("boundRater", i))
             );
             _registerAgent(rater);
+            _stakeRater(rater);
 
             vm.prank(rater);
             registry.postReputation(targetAgent, rating, "", "");
@@ -156,6 +176,7 @@ contract AgentReputationRegistryFuzzTest is Test {
 
         address rater = makeAddr("rateLimitRater");
         _registerAgent(rater);
+        _stakeRater(rater);
 
         vm.prank(rater);
         registry.postReputation(targetAgent, 3, "", "");
@@ -181,6 +202,7 @@ contract AgentReputationRegistryFuzzTest is Test {
 
         address rater = makeAddr("canRateRater");
         _registerAgent(rater);
+        _stakeRater(rater);
 
         // Initially can rate
         (bool canRateBefore, ) = registry.canRate(rater, targetAgent);
@@ -252,6 +274,8 @@ contract AgentReputationRegistryFuzzTest is Test {
 contract AgentReputationRegistryHandler is Test {
     AgentIdentityRegistry public identity;
     AgentReputationRegistry public registry;
+    uint256 public immutable registrationFee;
+    uint256 public immutable minStake;
 
     address[] public targets;
     address[] public raters;
@@ -260,9 +284,16 @@ contract AgentReputationRegistryHandler is Test {
     mapping(address => uint256) public totalRatingsGhost;
     uint256 public totalPostCount;
 
-    constructor(AgentReputationRegistry _registry, AgentIdentityRegistry _identity) {
+    constructor(
+        AgentReputationRegistry _registry,
+        AgentIdentityRegistry _identity,
+        uint256 _registrationFee,
+        uint256 _minStake
+    ) {
         registry = _registry;
         identity = _identity;
+        registrationFee = _registrationFee;
+        minStake = _minStake;
 
         for (uint256 i = 0; i < 3; i++) {
             targets.push(makeAddr(string(abi.encodePacked("target", i))));
@@ -275,12 +306,22 @@ contract AgentReputationRegistryHandler is Test {
         string[] memory caps = new string[](1);
         caps[0] = "inv-cap";
         for (uint256 i = 0; i < targets.length; i++) {
+            vm.deal(targets[i], registrationFee);
             vm.prank(targets[i]);
-            identity.registerAgent("bafybeihkoviema7g3gxyt6la7vd5ho32ictqbilu3ez5n5zvkdxjqpnqfa", caps);
+            identity.registerAgent{value: registrationFee}(
+                "bafybeihkoviema7g3gxyt6la7vd5ho32ictqbilu3ez5n5zvkdxjqpnqfa",
+                caps
+            );
         }
         for (uint256 i = 0; i < raters.length; i++) {
+            vm.deal(raters[i], registrationFee + minStake);
             vm.prank(raters[i]);
-            identity.registerAgent("bafybeiemxf5abjwjbikoz4mc3a3dla6ual3jsgpdr4cjr3oz3evfyavhwq", caps);
+            identity.registerAgent{value: registrationFee}(
+                "bafybeiemxf5abjwjbikoz4mc3a3dla6ual3jsgpdr4cjr3oz3evfyavhwq",
+                caps
+            );
+            vm.prank(raters[i]);
+            registry.depositRaterStake{value: minStake}();
         }
     }
 
@@ -322,11 +363,22 @@ contract AgentReputationRegistryInvariantTest is Test {
     AgentIdentityRegistry public identity;
     AgentReputationRegistry public registry;
     AgentReputationRegistryHandler public handler;
+    uint256 internal constant REGISTRATION_FEE = 1 wei;
+    uint256 internal constant MIN_STAKE = 1 wei;
 
     function setUp() public {
         identity = new AgentIdentityRegistry();
+        identity.setFeeRecipient(makeAddr("treasury"));
+        identity.setRegistrationFeeWei(REGISTRATION_FEE);
         registry = new AgentReputationRegistry(address(identity));
-        handler = new AgentReputationRegistryHandler(registry, identity);
+        identity.setReputationRegistry(address(registry));
+        registry.setMinRaterStakeWei(MIN_STAKE);
+        handler = new AgentReputationRegistryHandler(
+            registry,
+            identity,
+            REGISTRATION_FEE,
+            MIN_STAKE
+        );
 
         targetContract(address(handler));
     }

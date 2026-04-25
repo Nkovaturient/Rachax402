@@ -9,6 +9,8 @@ import {AgentReputationRegistry} from "../../src/AgentReputationRegistry.sol";
 contract AgentReputationRegistryTest is Test {
     AgentIdentityRegistry public identity;
     AgentReputationRegistry public registry;
+    uint256 internal constant REGISTRATION_FEE = 0.01 ether;
+    uint256 internal constant MIN_STAKE = 1 wei;
 
     // Test addresses
     address public raterA;
@@ -36,7 +38,11 @@ contract AgentReputationRegistryTest is Test {
 
     function setUp() public {
         identity = new AgentIdentityRegistry();
+        identity.setFeeRecipient(makeAddr("treasury"));
+        identity.setRegistrationFeeWei(REGISTRATION_FEE);
         registry = new AgentReputationRegistry(address(identity));
+        identity.setReputationRegistry(address(registry));
+        registry.setMinRaterStakeWei(MIN_STAKE);
 
         raterA = makeAddr("raterA");
         raterB = makeAddr("raterB");
@@ -49,13 +55,24 @@ contract AgentReputationRegistryTest is Test {
         _registerAgent(raterC);
         _registerAgent(targetAgent);
         _registerAgent(anotherAgent);
+
+        _fundAndStakeRater(raterA, MIN_STAKE);
+        _fundAndStakeRater(raterB, MIN_STAKE);
+        _fundAndStakeRater(raterC, MIN_STAKE);
     }
 
     function _registerAgent(address agent) internal {
         string[] memory caps = new string[](1);
         caps[0] = "test-cap";
+        vm.deal(agent, 1 ether);
         vm.prank(agent);
-        identity.registerAgent(PROOF_CID, caps);
+        identity.registerAgent{value: REGISTRATION_FEE}(PROOF_CID, caps);
+    }
+
+    function _fundAndStakeRater(address rater, uint256 amount) internal {
+        vm.deal(rater, rater.balance + amount);
+        vm.prank(rater);
+        registry.depositRaterStake{value: amount}();
     }
 
     // postReputation Tests
@@ -179,6 +196,57 @@ contract AgentReputationRegistryTest is Test {
 
         vm.prank(stranger);
         registry.postReputation(targetAgent, 5, COMMENT_GOOD, PROOF_CID);
+    }
+
+    function test_PostReputation_RevertIfInsufficientRaterStake() public {
+        registry.setMinRaterStakeWei(1 ether);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                AgentReputationRegistry.InsufficientRaterStake.selector,
+                raterA,
+                uint256(MIN_STAKE),
+                uint256(1 ether)
+            )
+        );
+        vm.prank(raterA);
+        registry.postReputation(targetAgent, 5, COMMENT_GOOD, PROOF_CID);
+    }
+
+    function test_PostReputation_SuccessAfterRaterStakeDeposit() public {
+        registry.setMinRaterStakeWei(2 ether);
+        vm.deal(raterA, 2 ether);
+
+        vm.prank(raterA);
+        registry.depositRaterStake{value: 2 ether}();
+
+        assertEq(registry.raterStake(raterA), 2 ether + MIN_STAKE);
+
+        vm.prank(raterA);
+        registry.postReputation(targetAgent, 5, COMMENT_GOOD, PROOF_CID);
+
+        assertEq(registry.getRatingsCount(targetAgent), 1);
+    }
+
+    function test_CanRate_FalseWhenInsufficientStake() public {
+        registry.setMinRaterStakeWei(1 ether);
+
+        (bool canRateNow, uint256 next) = registry.canRate(raterA, targetAgent);
+        assertFalse(canRateNow);
+        assertEq(next, 0);
+    }
+
+    function test_WithdrawRaterStake() public {
+        registry.setMinRaterStakeWei(3 ether);
+        vm.deal(raterA, 3 ether);
+
+        vm.prank(raterA);
+        registry.depositRaterStake{value: 2 ether}();
+
+        vm.prank(raterA);
+        registry.withdrawRaterStake(0.5 ether);
+
+        assertEq(registry.raterStake(raterA), 1.5 ether + MIN_STAKE);
     }
 
     function test_PostReputation_RevertIfTargetNotRegistered() public {

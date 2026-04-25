@@ -10,6 +10,7 @@ import {AgentIdentityRegistry} from "../../src/AgentIdentityRegistry.sol";
  */
 contract AgentIdentityRegistryFuzzTest is Test {
     AgentIdentityRegistry public registry;
+    uint256 internal constant REGISTRATION_FEE = 1 wei;
 
     // Test actors
     address[] public actors;
@@ -17,6 +18,8 @@ contract AgentIdentityRegistryFuzzTest is Test {
 
     function setUp() public {
         registry = new AgentIdentityRegistry();
+        registry.setFeeRecipient(makeAddr("treasury"));
+        registry.setRegistrationFeeWei(REGISTRATION_FEE);
 
         // Create test actors
         for (uint256 i = 0; i < NUM_ACTORS; i++) {
@@ -25,6 +28,12 @@ contract AgentIdentityRegistryFuzzTest is Test {
     }
 
     // Fuzz Tests
+
+    function _register(address agent, string memory cid, string[] memory caps) internal {
+        vm.deal(agent, REGISTRATION_FEE);
+        vm.prank(agent);
+        registry.registerAgent{value: REGISTRATION_FEE}(cid, caps);
+    }
 
     /// @dev Fuzz: Any non-empty CID should successfully register
     function testFuzz_RegisterAgent_ValidCID(string calldata cid) public {
@@ -35,8 +44,7 @@ contract AgentIdentityRegistryFuzzTest is Test {
         string[] memory caps = new string[](1);
         caps[0] = "test-cap";
 
-        vm.prank(agent);
-        registry.registerAgent(cid, caps);
+        _register(agent, cid, caps);
 
         assertTrue(registry.isAgentRegistered(agent));
         assertEq(registry.getAgentCard(agent), cid);
@@ -53,8 +61,7 @@ contract AgentIdentityRegistryFuzzTest is Test {
             caps[i] = string(abi.encodePacked("cap-", vm.toString(i)));
         }
 
-        vm.prank(agent);
-        registry.registerAgent("QmTestCID123", caps);
+        _register(agent, "QmTestCID123", caps);
 
         string[] memory storedCaps = registry.getAgentCapabilities(agent);
         assertEq(storedCaps.length, capCount);
@@ -71,8 +78,7 @@ contract AgentIdentityRegistryFuzzTest is Test {
         string[] memory caps = new string[](1);
         caps[0] = "initial-cap";
 
-        vm.prank(agent);
-        registry.registerAgent("QmInitialCID", caps);
+        _register(agent, "QmInitialCID", caps);
 
         string[] memory newCaps = new string[](1);
         newCaps[0] = "updated-cap";
@@ -94,11 +100,7 @@ contract AgentIdentityRegistryFuzzTest is Test {
             string[] memory caps = new string[](1);
             caps[0] = "common-cap";
 
-            vm.prank(actors[i]);
-            registry.registerAgent(
-                string(abi.encodePacked("QmCID", vm.toString(i))),
-                caps
-            );
+            _register(actors[i], string(abi.encodePacked("QmCID", vm.toString(i))), caps);
         }
 
         string[] memory searchTags = new string[](1);
@@ -129,8 +131,7 @@ contract AgentIdentityRegistryFuzzTest is Test {
         string[] memory caps = new string[](1);
         caps[0] = capability;
 
-        vm.prank(agent);
-        registry.registerAgent("QmTestCID", caps);
+        _register(agent, "QmTestCID", caps);
 
         assertTrue(registry.agentHasCapability(agent, capability));
 
@@ -153,11 +154,7 @@ contract AgentIdentityRegistryFuzzTest is Test {
             string[] memory caps = new string[](1);
             caps[0] = "test-cap";
 
-            vm.prank(actors[i]);
-            registry.registerAgent(
-                string(abi.encodePacked("QmCID", vm.toString(i))),
-                caps
-            );
+            _register(actors[i], string(abi.encodePacked("QmCID", vm.toString(i))), caps);
         }
 
         uint256 registeredCount = 0;
@@ -174,8 +171,7 @@ contract AgentIdentityRegistryFuzzTest is Test {
         string[] memory caps = new string[](1);
         caps[0] = "test-cap";
 
-        vm.prank(actors[0]);
-        registry.registerAgent("QmTestCID", caps);
+        _register(actors[0], "QmTestCID", caps);
 
         // Should not revert
         string memory cid = registry.getAgentCard(actors[0]);
@@ -189,6 +185,7 @@ contract AgentIdentityRegistryFuzzTest is Test {
  */
 contract AgentIdentityRegistryHandler is Test {
     AgentIdentityRegistry public registry;
+    uint256 public immutable registrationFee;
 
     address[] public actors;
     address[] public registeredAgents;
@@ -198,8 +195,9 @@ contract AgentIdentityRegistryHandler is Test {
     uint256 public registerCount;
     uint256 public updateCount;
 
-    constructor(AgentIdentityRegistry _registry) {
+    constructor(AgentIdentityRegistry _registry, uint256 _registrationFee) {
         registry = _registry;
+        registrationFee = _registrationFee;
 
         // Create actors
         for (uint256 i = 0; i < 5; i++) {
@@ -217,8 +215,9 @@ contract AgentIdentityRegistryHandler is Test {
         caps[0] = "cap-a";
         caps[1] = "cap-b";
 
+        vm.deal(actor, registrationFee);
         vm.prank(actor);
-        registry.registerAgent(cid, caps);
+        registry.registerAgent{value: registrationFee}(cid, caps);
 
         isRegistered[actor] = true;
         registeredAgents.push(actor);
@@ -259,10 +258,13 @@ contract AgentIdentityRegistryHandler is Test {
 contract AgentIdentityRegistryInvariantTest is Test {
     AgentIdentityRegistry public registry;
     AgentIdentityRegistryHandler public handler;
+    uint256 internal constant REGISTRATION_FEE = 1 wei;
 
     function setUp() public {
         registry = new AgentIdentityRegistry();
-        handler = new AgentIdentityRegistryHandler(registry);
+        registry.setFeeRecipient(makeAddr("treasury"));
+        registry.setRegistrationFeeWei(REGISTRATION_FEE);
+        handler = new AgentIdentityRegistryHandler(registry, REGISTRATION_FEE);
 
         targetContract(address(handler));
     }

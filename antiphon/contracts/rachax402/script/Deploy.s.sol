@@ -10,6 +10,19 @@ contract DeployAll is Script {
     AgentReputationRegistry public reputationRegistry;
 
     function run() external {
+        uint256 registrationFeeWei = vm.envOr(
+            "REGISTRATION_FEE_WEI",
+            uint256(0.001 ether)
+        );
+        uint256 minRaterStakeWei = vm.envOr(
+            "MIN_RATER_STAKE_WEI",
+            uint256(0.01 ether)
+        );
+        uint256 maxUniqueRatersPerPeriod = vm.envOr(
+            "MAX_UNIQUE_RATERS_PER_PERIOD",
+            uint256(10)
+        );
+
         vm.startBroadcast();
 
         identityRegistry = new AgentIdentityRegistry();
@@ -17,6 +30,18 @@ contract DeployAll is Script {
 
         reputationRegistry = new AgentReputationRegistry(address(identityRegistry));
         console.log("AgentReputationRegistry deployed at:", address(reputationRegistry));
+
+        identityRegistry.setRegistrationFeeWei(registrationFeeWei);
+        identityRegistry.setReputationRegistry(address(reputationRegistry));
+        reputationRegistry.setMinRaterStakeWei(minRaterStakeWei);
+        reputationRegistry.setMaxUniqueRatersPerTargetPeriod(maxUniqueRatersPerPeriod);
+
+        console.log("Configured registrationFeeWei:", registrationFeeWei);
+        console.log("Configured minRaterStakeWei:", minRaterStakeWei);
+        console.log(
+            "Configured maxUniqueRatersPerPeriod:",
+            maxUniqueRatersPerPeriod
+        );
 
         vm.stopBroadcast();
     }
