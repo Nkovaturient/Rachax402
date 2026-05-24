@@ -34,10 +34,11 @@ app.use(express.json());
 // Configuration
 const RECIPIENT_ADDRESS = process.env.RECIPIENT_ADDRESS;
 const FACILITATOR_URL = process.env.FACILITATOR_URL || 'https://facilitator.xpay.sh';
-const NETWORK = process.env.X402_NETWORK || 'eip155:84532';
 
 // CDP facilitator supports Base mainnet + Base Sepolia, and Permit2 (smart wallet compatible). xpay is EIP-3009 only.
+// Align onchain-agent: NETWORK_ID=base-mainnet + X402 eip155:8453, or base-sepolia + eip155:84532 (or set X402_NETWORK explicitly).
 const useCdp = !!(process.env.CDP_API_KEY_ID && process.env.CDP_API_KEY_SECRET);
+const NETWORK = process.env.X402_NETWORK || (useCdp ? 'eip155:8453' : 'eip155:84532');
 
 const facilitatorClient = useCdp
   ? new HTTPFacilitatorClient(cdpFacilitator)
