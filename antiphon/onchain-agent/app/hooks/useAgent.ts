@@ -1,6 +1,10 @@
 /**
  * useAgent.ts — Rachax402 AgentKit React Hook
  *
+ * Chain selection is server-side only: set onchain-agent .env NETWORK_ID to
+ * `base-sepolia` or `base-mainnet` (and matching RPC_URL / ERC8004_*), same as AgentB
+ * X402_NETWORK + CDP facilitator. This hook only streams /api/agent.
+ *
  * Reads the text/plain stream from route.ts and reassembles:
  *   0:"<delta>"\n  → text chunks accumulated into the agent message
  *   a:{...}\n      → tool result appended to the live toolCalls log

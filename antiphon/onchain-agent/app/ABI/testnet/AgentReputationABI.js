@@ -386,4 +386,4 @@ export const AgentReputationABI = [
         "stateMutability": "nonpayable",
         "type": "function"
     }
-];
+]

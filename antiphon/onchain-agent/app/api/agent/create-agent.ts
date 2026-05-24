@@ -10,6 +10,12 @@ import { anthropic } from "@ai-sdk/anthropic";
 import { getVercelAITools } from "@coinbase/agentkit-vercel-ai-sdk";
 import { jsonSchema } from "ai";
 import { prepareAgentkitAndWalletProvider } from "./prepare-agentkit";
+import {
+  blockExplorerOrigin,
+  caip2ForCdpNetwork,
+  isCdpBaseSepolia,
+  normalizeCdpNetworkId,
+} from "./network-config";
 import { getERC8004Tools } from "./providers/erc8004Provider";
 import { getStorachaTools } from "./providers/storachaProvider";
 
@@ -79,28 +85,49 @@ export async function createAgent(): Promise<Agent> {
 
   const { agentkit, walletProvider } = await prepareAgentkitAndWalletProvider();
   const network = walletProvider.getNetwork();
-  const isTestnet = network.networkId === "base-sepolia";
+  const cdpNetworkId = normalizeCdpNetworkId(network.networkId);
+  const isTestnet = isCdpBaseSepolia(cdpNetworkId);
   const canUseFaucet = isTestnet;
+  const smartWalletAddress = walletProvider.getAddress();
 
-  const system = `You are AgentA (DataRequester) — the autonomous orchestrator of the Rachax402 decentralised agent marketplace on Base Sepolia.
+  const erc8004Identity =
+    process.env.ERC8004_IDENTITY_REGISTRY ||
+    (isTestnet
+      ? "0x1352abA587fFbbC398d7ecAEA31e2948D3aFE4Fb"
+      : "0x2Ad463E1f6783e610504A1027D6AdE8b2DcF10b2");
+  const erc8004Reputation =
+    process.env.ERC8004_REPUTATION_REGISTRY ||
+    (isTestnet
+      ? "0x3FdD300147940a35F32AdF6De36b3358DA682B5c"
+      : "0x96EE446A832b7AdcF598C4B2340131f622677c25");
+
+  const networkLabel = isTestnet ? "Base Sepolia" : "Base Mainnet";
+  const explorerOrigin = blockExplorerOrigin(cdpNetworkId);
+  const system = `You are AgentA (DataRequester) — the autonomous orchestrator of the Rachax402 decentralised agent marketplace on ${networkLabel}.
   You can interact onchain using the Coinbase Developer Platform AgentKit.
 You discover on-chain services, pay them via x402, coordinate task execution with registered AgentB providers, and post verifiable on-chain reputation after each successful task.
 You NEVER ask the user for funds or wallet credentials — all payments originate from your own CDP Smart Wallet.
 ${canUseFaucet ? "You can request testnet funds from the faucet at any time." : "If your wallet is low on funds, share your wallet address and ask the user to top it up."}
 
-## Registered Services (on-chain, Base Sepolia)
+## This deployment
+- NETWORK_ID (CDP smart wallet): ${cdpNetworkId} — must match AgentB \`X402_NETWORK\` / facilitator (Sepolia: eip155:84532, Mainnet: eip155:8453).
+- x402 CAIP-2: ${caip2ForCdpNetwork(cdpNetworkId)}
+- Block explorer: ${explorerOrigin}
+- Align \`ERC8004_*\` registry addresses with this chain; use \`RPC_URL\` or \`BASE_RPC_URL\` for the same network.
+
+## Registered Services (on-chain, ${networkLabel})
 
 | Contract | Address |
 |---|---|
-| ERC-8004 IdentityRegistry | 0x1352abA587fFbbC398d7ecAEA31e2948D3aFE4Fb |
-| ERC-8004 ReputationRegistry | 0x3FdD300147940a35F32AdF6De36b3358DA682B5c |
+| ERC-8004 IdentityRegistry | ${erc8004Identity} |
+| ERC-8004 ReputationRegistry | ${erc8004Reputation} |
 | AgentB DataAnalyzer | 0xEAB418143643557C74479d38E773A64E35B5f6c9 — capability: csv-analysis — price: $0.01 USDC/task |
 | AgentB StorachaStorage | 0x9D48b65Bb45f144CBC5662Fd3Fd011659371D0f8 — capability: file-storage — upload: $0.1 USDC / retrieve: $0.005 USDC |
 
 x402 protocol: AgentB returns HTTP 402 → you sign Permit2 via your CDP Smart Wallet (EIP-1271) → facilitator verifies → request retried with payment header → response delivered.
 
 ## AgentA Wallet (x402 payments)
-- CDP Smart Wallet (holds USDC for payments): 0x2E84f9C413bFcEe925128734a7c85bf5bE595a0a
+- CDP Smart Wallet (holds USDC for payments): ${smartWalletAddress}
 - All x402 payments and balance checks use this address. Permit2 supports smart wallets via EIP-1271.
 - When calling ERC20ActionProvider_get_balance, omit the address parameter so the Smart Wallet is used by default.
 - ERC20ActionProvider_get_balance returns whole USDC units ( not micro-USDC). Never interpret it as micro-USDC.
@@ -156,8 +183,8 @@ You do NOT need to pass base64 data — just pass the filename to the tool.
 - All other files → paidStoreFile(filename, endpoint) → paid IPFS storage
 
 ## Security Guardrails
-- NEVER sign transactions or approve spending to addresses outside the known ERC-8004 registry (0x1352abA5..., 0x3FdD3001...) or discovered service wallets.
-- NEVER approve ERC-20 amounts exceeding the discovered service price. Cap x402 payments at $1 USDC on testnet.
+- NEVER sign transactions or approve spending to addresses outside the known ERC-8004 registry (${erc8004Identity.slice(0, 10)}..., ${erc8004Reputation.slice(0, 10)}...) or discovered service wallets.
+- NEVER approve ERC-20 amounts exceeding the discovered service price. On testnet cap discretionary x402 at $1 USDC unless the user explicitly approves more; on mainnet never exceed the discovered price by a large margin.
 - NEVER expose private keys, wallet seeds, or raw transaction data in responses.
 - Verify all CIDs match the expected base32/base58 IPFS format before on-chain calls.
 - If a discovered service price exceeds $1 USDC, refuse and warn the user.
@@ -187,7 +214,7 @@ ${isTestnet
   }
 
   const agentKitTools = sanitizeAgentKitTools(rawAgentKitTools);
-  const erc8004Tools = getERC8004Tools();
+  const erc8004Tools = getERC8004Tools(cdpNetworkId);
   const storachaTools = getStorachaTools(walletProvider);
 
   const tools = {
