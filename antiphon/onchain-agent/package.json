@@ -5,9 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "next dev",
-    "build": "next build --webpack",
+    "build": "prisma generate && next build --webpack",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "postinstall": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:push": "prisma db push"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^2.0.67",
@@ -18,8 +21,12 @@
     "@langchain/core": "^0.3.19",
     "@langchain/langgraph": "^0.2.21",
     "@langchain/openai": "^0.3.14",
+    "@prisma/client": "^6.19.3",
     "@solana/web3.js": "^1.98.0",
     "@storacha/client": "^2.1.2",
+    "@supabase/ssr": "^0.10.3",
+    "@supabase/supabase-js": "^2.106.1",
+    "@tailwindcss/typography": "^0.5.19",
     "@tanstack/react-query": "^5",
     "@x402/core": "^2.7.0",
     "@x402/evm": "^2.7.0",
@@ -31,6 +38,7 @@
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "react-markdown": "^10.0.0",
+    "remark-gfm": "^4.0.1",
     "viem": "^2.24.1",
     "wagmi": "^2.11.0",
     "zod": "^3.23.0"
@@ -40,6 +48,7 @@
     "@types/node": "^22",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "prisma": "^6.19.3",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.1.0"
   },

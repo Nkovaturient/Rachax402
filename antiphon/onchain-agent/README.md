@@ -73,15 +73,41 @@ File bytes are stored server-side (`file-context.ts`). Tools receive only `filen
 | `ANTHROPIC_API_KEY` | [Anthropic Console](https://console.anthropic.com/) |
 | `CDP_API_KEY_NAME` + `CDP_API_KEY_PRIVATE_KEY` | [CDP Portal](https://portal.cdp.coinbase.com/) |
 | `STORACHA_AGENT_PRIVATE_KEY` + `STORACHA_AGENT_DELEGATION` | Storacha CLI (`storacha key create`) |
+| `NEXT_PUBLIC_SUPABASE_URL` + `NEXT_PUBLIC_SUPABASE_ANON_KEY` | [Supabase Dashboard](https://supabase.com/dashboard) → Project Settings → API |
+| `DATABASE_URL` + `DIRECT_URL` | Supabase → Project Settings → Database (pooler + direct) |
+
+### Auth & Database (Supabase + Prisma)
+
+1. Create a Supabase project and enable **Email (magic link)** and **Google** under Authentication → Providers.
+2. Set **Site URL** to `http://localhost:3000` (and your production URL). Add redirect URL: `http://localhost:3000/auth/callback`. [https://<publishable_url>.supabase.co/auth/v1/callback]
+3. Copy API keys and Postgres connection strings into `.env` (see `.env.example`).
+4. Push schema:
+
+```sh
+npm run db:push    # or: npm run db:migrate
+```
+
+**Routes**
+
+| Path | Access |
+|------|--------|
+| `/` | Public landing |
+| `/login` | Magic link + Google sign-in |
+| `/agent` | AgentA chat (auth required) |
+
+Conversation history is stored per user in Postgres (`User` → `Conversation` → `Message`). Clear in the UI starts a new conversation thread.
 
 ### Install & Run
 
 ```sh
 cd onchain-agent
-pnpm install
+npm install
 cp .env.example .env   # fill in keys
-pnpm dev               # http://localhost:3000
+npm run db:push        # first-time schema
+npm run dev            # http://localhost:3000
 ```
+
+Sign in at `/login`, then open **AgentA** at `/agent`.
 
 ## MCP Server (`../mcp-server/`)
 
