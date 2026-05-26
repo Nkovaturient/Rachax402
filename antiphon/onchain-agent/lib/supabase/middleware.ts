@@ -28,11 +28,8 @@ export async function updateSession(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   const path = request.nextUrl.pathname;
-  const isAuthRoute =
-    path.startsWith("/login") ||
-    path.startsWith("/auth/callback");
   const isProtected =
-    path.startsWith("/agent") || path.startsWith("/api/agent") || path.startsWith("/api/conversations");
+    path.startsWith("/api/agent") || path.startsWith("/api/conversations");
 
   if (!user && isProtected) {
     const url = request.nextUrl.clone();
@@ -43,7 +40,7 @@ export async function updateSession(request: NextRequest) {
 
   if (user && path === "/login") {
     const url = request.nextUrl.clone();
-    url.pathname = "/agent";
+    url.pathname = "/marketplace";
     return NextResponse.redirect(url);
   }
 

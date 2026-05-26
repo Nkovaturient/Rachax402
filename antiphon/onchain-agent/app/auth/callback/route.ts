@@ -5,7 +5,7 @@ import { upsertUser } from "@/lib/auth/upsert-user";
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url);
   const code = searchParams.get("code");
-  const next = searchParams.get("next") ?? "/agent";
+  const next = searchParams.get("next") ?? "/marketplace";
 
   if (code) {
     const supabase = await createClient();

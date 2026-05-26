@@ -75,6 +75,7 @@ File bytes are stored server-side (`file-context.ts`). Tools receive only `filen
 | `STORACHA_AGENT_PRIVATE_KEY` + `STORACHA_AGENT_DELEGATION` | Storacha CLI (`storacha key create`) |
 | `NEXT_PUBLIC_SUPABASE_URL` + `NEXT_PUBLIC_SUPABASE_ANON_KEY` | [Supabase Dashboard](https://supabase.com/dashboard) → Project Settings → API |
 | `DATABASE_URL` + `DIRECT_URL` | Supabase → Project Settings → Database (pooler + direct) |
+| `TAVILY_API_KEY` | [Tavily](https://tavily.com/) — powers SDG agent `web_search` (replaces DuckDuckGo instant answers) |
 
 ### Auth & Database (Supabase + Prisma)
 
@@ -92,10 +93,13 @@ npm run db:push    # or: npm run db:migrate
 | Path | Access |
 |------|--------|
 | `/` | Public landing |
+| `/marketplace` | Public — 17 SDG agent cards |
+| `/agent/agenta` | AgentA orchestrator (sign in to chat) |
+| `/agent/sdg-01` … `/agent/sdg-17` | SDG arenas (public view; sign in to chat) |
+| `/agent` | Redirects to `/marketplace` |
 | `/login` | Magic link + Google sign-in |
-| `/agent` | AgentA chat (auth required) |
 
-Conversation history is stored per user in Postgres (`User` → `Conversation` → `Message`). Clear in the UI starts a new conversation thread.
+Conversation history is scoped per `userId` + `agentSlug` in Postgres. Run `npm run db:push` after pulling to add the `agentSlug` column.
 
 ### Install & Run
 
@@ -107,7 +111,7 @@ npm run db:push        # first-time schema
 npm run dev            # http://localhost:3000
 ```
 
-Sign in at `/login`, then open **AgentA** at `/agent`.
+Sign in at `/login`, then open **AgentA** at `/agent/agenta` or browse SDG agents at `/marketplace`.
 
 ## MCP Server (`../mcp-server/`)
 

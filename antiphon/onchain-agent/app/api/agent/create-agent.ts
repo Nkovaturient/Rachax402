@@ -18,6 +18,7 @@ import {
 } from "./network-config";
 import { getERC8004Tools } from "./providers/erc8004Provider";
 import { getStorachaTools } from "./providers/storachaProvider";
+import { getSystemPromptBlock } from "@/lib/data/registry";
 
 /**
  * Converts AgentKit tools from AI SDK v4 format (`parameters`) to v5 format (`inputSchema`).
@@ -74,10 +75,14 @@ type Agent = {
   maxSteps: number;
 };
 
-let agent: Agent;
+const agentCache = new Map<string, Agent>();
 
-export async function createAgent(): Promise<Agent> {
-  if (agent) return agent;
+export async function createAgent(options?: {
+  agentSlug?: string;
+}): Promise<Agent> {
+  const slug = options?.agentSlug ?? "agenta";
+  const cached = agentCache.get(slug);
+  if (cached) return cached;
 
   if (!process.env.ANTHROPIC_API_KEY) {
     throw new Error("ANTHROPIC_API_KEY required in .env");
@@ -209,6 +214,9 @@ ${isTestnet
       : "Network: Base Mainnet. Real USDC is used for all x402 payments."
     }`;
 
+  const overlay = getSystemPromptBlock(slug);
+  const fullSystem = overlay ? `${system}\n\n${overlay}` : system;
+
   // ── Build merged tool set ─────────────────────────────────────────────────
   const rawAgentKitTools = getVercelAITools(agentkit);
 
@@ -231,12 +239,13 @@ ${isTestnet
     ...storachaTools,
   };
 
-  agent = {
+  const built: Agent = {
     model: anthropic("claude-sonnet-4-6"),
-    system,
+    system: fullSystem,
     tools,
     maxSteps: 15,
   };
 
-  return agent;
+  agentCache.set(slug, built);
+  return built;
 }

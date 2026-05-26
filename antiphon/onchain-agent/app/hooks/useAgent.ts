@@ -9,11 +9,13 @@
  *   0:"<delta>"\n  → text chunks accumulated into the agent message
  *   a:{...}\n      → tool result appended to the live toolCalls log
  *
- * Streams /api/agent with conversation persistence and throttled UI updates.
+ * Streams /api/agent with per-agentSlug conversation persistence. and throttled UI updates.
  */
 
 import { useState, useRef, useCallback, useEffect } from "react";
 import type { ToolEvent } from "../components/ToolLog";
+import { AGENTA_SLUG } from "@/lib/data/registry";
+import { parseToolResultPreview } from "@/lib/search/format-tool-preview";
 
 export interface AgentMessage {
   text: string;
@@ -27,7 +29,17 @@ export interface SendMessageOptions {
 
 const STREAM_THROTTLE_MS = 50;
 
-export function useAgent() {
+export type AgentChatBindings = {
+  messages: AgentMessage[];
+  toolEvents: ToolEvent[];
+  sendMessage: (input: string, options?: SendMessageOptions) => Promise<void>;
+  isThinking: boolean;
+  clearHistory: () => Promise<void>;
+  hydrated: boolean;
+  conversationId: string | null;
+};
+
+export function useAgent(agentSlug: string = AGENTA_SLUG): AgentChatBindings {
   const [messages, setMessages] = useState<AgentMessage[]>([]);
   const [toolEvents, setToolEvents] = useState<ToolEvent[]>([]);
   const [isThinking, setIsThinking] = useState(false);
@@ -38,9 +50,10 @@ export function useAgent() {
   const throttleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const flushPendingText = useCallback((agentMsgIndex: number) => {
-    const text = pendingTextRef.current;
     setMessages((prev) =>
-      prev.map((m, i) => (i === agentMsgIndex ? { ...m, text } : m)),
+      prev.map((m, i) =>
+        i === agentMsgIndex ? { ...m, text: pendingTextRef.current } : m,
+      ),
     );
   }, []);
 
@@ -57,9 +70,12 @@ export function useAgent() {
 
   useEffect(() => {
     let cancelled = false;
+    setHydrated(false);
     (async () => {
       try {
-        const res = await fetch("/api/conversations/current");
+        const res = await fetch(
+          `/api/conversations/current?agentSlug=${encodeURIComponent(agentSlug)}`,
+        );
         if (!res.ok) return;
         const data = (await res.json()) as {
           conversationId: string;
@@ -83,7 +99,7 @@ export function useAgent() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [agentSlug]);
 
   const sendMessage = async (input: string, options?: SendMessageOptions) => {
     if (!input.trim() && !options?.file) return;
@@ -117,12 +133,14 @@ export function useAgent() {
         const formData = new FormData();
         formData.append("message", input);
         formData.append("file", options.file);
+        formData.append("agentSlug", agentSlug);
         if (conversationId) formData.append("conversationId", conversationId);
         body = formData;
       } else {
         body = JSON.stringify({
           userMessage: input,
           conversationId: conversationId ?? undefined,
+          agentSlug,
         });
         headers["Content-Type"] = "application/json";
       }
@@ -130,7 +148,7 @@ export function useAgent() {
       const res = await fetch("/api/agent", { method: "POST", headers, body });
 
       if (!res.ok || !res.body) {
-        const errText = await res.text().catch(() => "Unknown error");
+        const errText = await res.text().catch(() => "Unauthorized or server error");
         setMessages((prev) =>
           prev.map((m, i) =>
             i === agentMsgIndex ? { ...m, text: `Error: ${errText}` } : m,
@@ -171,9 +189,16 @@ export function useAgent() {
             try {
               const payload = JSON.parse(line.slice(2));
               const name = payload.toolName ?? "tool";
+              const now = Date.now();
               setToolEvents((prev) => [
                 ...prev,
-                { tool: name, status: "pending", result: "", timestamp: Date.now() },
+                {
+                  tool: name,
+                  status: "pending",
+                  result: "",
+                  timestamp: now,
+                  query: payload.query,
+                },
               ]);
             } catch {
               /* ignore */
@@ -182,27 +207,35 @@ export function useAgent() {
             try {
               const payload = JSON.parse(line.slice(2));
               const name = payload.toolName ?? "tool";
+              const raw = payload.result;
               const resultText =
-                typeof payload.result === "string"
-                  ? payload.result
-                  : JSON.stringify(payload.result);
+                typeof raw === "string" ? raw : JSON.stringify(raw);
+              const { query, preview } = parseToolResultPreview(name, raw);
+              const doneAt = Date.now();
               setToolEvents((prev) => {
                 const updated = [...prev];
                 const idx = [...updated]
                   .reverse()
                   .findIndex((e) => e.tool === name && e.status === "pending");
                 if (idx !== -1) {
-                  updated[updated.length - 1 - idx] = {
-                    ...updated[updated.length - 1 - idx],
+                  const realIdx = updated.length - 1 - idx;
+                  const started = updated[realIdx].timestamp;
+                  updated[realIdx] = {
+                    ...updated[realIdx],
                     status: "done",
                     result: resultText,
+                    durationMs: doneAt - started,
+                    query: query ?? updated[realIdx].query,
+                    preview,
                   };
                 } else {
                   updated.push({
                     tool: name,
                     status: "done",
                     result: resultText,
-                    timestamp: Date.now(),
+                    timestamp: doneAt,
+                    preview,
+                    query,
                   });
                 }
                 return updated;
@@ -223,12 +256,11 @@ export function useAgent() {
       setMessages((prev) =>
         prev.map((m, i) => (i === agentMsgIndex ? { ...m, text: finalText } : m)),
       );
-    } catch (err) {
-      console.error("[useAgent] fetch error:", err);
+    } catch {
       setMessages((prev) =>
         prev.map((m, i) =>
           i === agentMsgIndex
-            ? { ...m, text: "Could not reach AgentA. Is the server running?" }
+            ? { ...m, text: "Could not reach the agent. Is the server running?" }
             : m,
         ),
       );
@@ -240,7 +272,10 @@ export function useAgent() {
 
   const clearHistory = async () => {
     try {
-      const res = await fetch("/api/conversations/current", { method: "DELETE" });
+      const res = await fetch(
+        `/api/conversations/current?agentSlug=${encodeURIComponent(agentSlug)}`,
+        { method: "DELETE" },
+      );
       if (res.ok) {
         const data = (await res.json()) as { conversationId: string };
         setConversationId(data.conversationId);

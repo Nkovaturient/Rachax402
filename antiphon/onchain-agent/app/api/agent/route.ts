@@ -12,6 +12,7 @@
 
 import { NextResponse } from "next/server";
 import { createAgent } from "./create-agent";
+import { getWebSearchTool } from "./providers/webSearchProvider";
 import { ModelMessage, streamText, stepCountIs } from "ai";
 import { setPendingFile, clearPendingFile } from "./file-context";
 import { getSessionUser } from "@/lib/auth/get-session-user";
@@ -34,12 +35,14 @@ export async function POST(req: Request) {
     const contentType = req.headers.get("content-type") || "";
     let userMessage = "";
     let conversationId: string | undefined;
+    let agentSlug = "agenta";
 
     if (contentType.includes("multipart/form-data")) {
       const formData = await req.formData();
       const textInput = (formData.get("message") as string) || "";
       const file = formData.get("file") as File | null;
       conversationId = (formData.get("conversationId") as string) || undefined;
+      agentSlug = (formData.get("agentSlug") as string) || agentSlug;
 
       userMessage = textInput;
 
@@ -68,6 +71,7 @@ export async function POST(req: Request) {
       const body = await req.json();
       userMessage = body.userMessage || body.message || "";
       conversationId = body.conversationId;
+      agentSlug = body.agentSlug || agentSlug;
     }
 
     if (!userMessage.trim()) {
@@ -76,6 +80,7 @@ export async function POST(req: Request) {
 
     const conversation = await getOrCreateConversation(
       session.dbUser.id,
+      agentSlug,
       conversationId,
     );
 
@@ -85,14 +90,19 @@ export async function POST(req: Request) {
       conversation.id,
     );
 
-    const agent = await createAgent();
+    const agent = await createAgent({ agentSlug });
+    const searchBudget = { count: 0 };
+    const tools = {
+      ...agent.tools,
+      ...getWebSearchTool({ agentSlug, budget: searchBudget }),
+    };
 
     let assistantText = "";
 
     const result = streamText({
       model: agent.model,
       system: agent.system,
-      tools: agent.tools as any,
+      tools: tools as any,
       messages: historyForModel,
       stopWhen: stepCountIs(agent.maxSteps),
     });

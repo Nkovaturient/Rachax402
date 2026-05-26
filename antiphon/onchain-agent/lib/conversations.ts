@@ -1,24 +1,29 @@
 import { prisma } from "@/lib/prisma.client";
 import type { ModelMessage } from "ai";
+import { AGENTA_SLUG } from "@/lib/data/registry";
 
 const MAX_HISTORY_MESSAGES = 40;
 
-export async function getOrCreateConversation(userId: string, conversationId?: string) {
+export async function getOrCreateConversation(
+  userId: string,
+  agentSlug: string = AGENTA_SLUG,
+  conversationId?: string,
+) {
   if (conversationId) {
     const existing = await prisma.conversation.findFirst({
-      where: { id: conversationId, userId },
+      where: { id: conversationId, userId, agentSlug },
     });
     if (existing) return existing;
   }
 
   const latest = await prisma.conversation.findFirst({
-    where: { userId },
+    where: { userId, agentSlug },
     orderBy: { updatedAt: "desc" },
   });
   if (latest) return latest;
 
   return prisma.conversation.create({
-    data: { userId },
+    data: { userId, agentSlug },
   });
 }
 

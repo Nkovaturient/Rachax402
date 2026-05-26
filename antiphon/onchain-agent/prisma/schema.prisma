@@ -23,12 +23,13 @@ model Conversation {
   id        String    @id @default(cuid())
   userId    String
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  agentSlug String    @default("agenta")
   title     String?
   messages  Message[]
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 
-  @@index([userId])
+  @@index([userId, agentSlug])
 }
 
 model Message {

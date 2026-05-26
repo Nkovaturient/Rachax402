@@ -15,7 +15,7 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Rachax402 · Agent",
+  title: "Rachax402",
   icons: {
     icon: "/Rachax402-logo.png",
   },

@@ -46,7 +46,7 @@ export default function LoginPage() {
       <div className="glass rounded-2xl border border-white/[0.06] p-8 shadow-glow-erc">
         <h1 className="text-2xl font-semibold text-[#e2e8f0] mb-1">Sign in</h1>
         <p className="text-sm text-[#94a3b8] mb-6">
-          Access AgentA with your Rachax402 account.
+          It's gonna be a lot of 'Agentic' fun. Are you in?
         </p>
 
         <button
