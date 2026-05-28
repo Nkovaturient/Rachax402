@@ -10,6 +10,14 @@ export function isValidAgentSlug(slug: string): slug is AgentSlug {
   return slug === AGENTA_SLUG || slug in SDG_BY_SLUG;
 }
 
+export function isSdgSlug(slug: string): boolean {
+  return slug in SDG_BY_SLUG;
+}
+
+export function isAgentaSlug(slug: string): boolean {
+  return slug === AGENTA_SLUG;
+}
+
 export function getSdgAgent(slug: string): SDGAgent | undefined {
   return SDG_BY_SLUG[slug];
 }

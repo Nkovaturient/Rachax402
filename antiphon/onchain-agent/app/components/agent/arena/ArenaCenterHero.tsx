@@ -2,10 +2,14 @@ import { SdgIcon } from "@/app/components/SdgIcon";
 import type { SDGAgent } from "@/lib/data/types";
 
 export function ArenaCenterHero({ agent }: { agent: SDGAgent }) {
-  const callouts = [
+  const callouts: string[] = [];
+  for (const label of [
     ...agent.connectionBadges.slice(0, 2),
     ...agent.dataSources.slice(0, 2),
-  ].slice(0, 4);
+  ]) {
+    if (!callouts.includes(label)) callouts.push(label);
+    if (callouts.length >= 4) break;
+  }
 
   const positions = ["left-0 top-8", "right-0 top-16", "left-4 bottom-24", "right-4 bottom-20"];
 
@@ -47,7 +51,7 @@ export function ArenaCenterHero({ agent }: { agent: SDGAgent }) {
 
         {callouts.map((label, i) => (
           <span
-            key={label}
+            key={`${agent.slug}-${i}-${label}`}
             className={`absolute hidden sm:block text-[10px] font-mono text-muted glass-light px-2 py-1 rounded-md ${positions[i] ?? ""}`}
           >
             {label}

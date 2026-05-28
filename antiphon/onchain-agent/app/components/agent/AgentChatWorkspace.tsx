@@ -68,7 +68,7 @@ export function AgentChatWorkspace({
         ) : (
           <div className="flex-grow flex flex-col items-center justify-center gap-4 p-8 text-center">
             <p className="text-[#94a3b8] text-sm">
-              Sign in to chat with {name} and run on-chain tools.
+              Sign in to chat with {name} and use research tools.
             </p>
             <Link
               href={loginHref}
@@ -100,7 +100,7 @@ export function sdgToChatConfig(agent: SDGAgent): ChatWorkspaceConfig {
     sdgTitle: agent.sdgTitle,
     description: agent.description,
     exampleTasks: agent.exampleTasks,
-    headerLabel: `${agent.name} · ERC-8004 · x402 · Storacha`,
+    headerLabel: `${agent.name} · ${agent.role} · Live research`,
     placeholder: `Ask ${agent.name} about ${agent.sdgTitle}…`,
     emptyTitle: `${agent.name} is ready`,
   };

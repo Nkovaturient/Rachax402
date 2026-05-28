@@ -4,18 +4,17 @@
  * Uses streamText so tool execution events keep the HTTP connection alive,
  * preventing browser/Vercel timeouts during 2-3 min agent pipelines.
  *
- * BUG FIXED (AI_InvalidPromptError: messages must not be empty):
- *   historyWithoutBlobs was built from `messages` BEFORE the new user message
- *   was pushed. On the first turn messages=[] → streamText received zero
- *   messages → crash. Fix: push first, then snapshot with blob-stripping.
+ * Branches: AgentA (on-chain commerce) vs SDG agents (research + briefs).
  */
 
 import { NextResponse } from "next/server";
 import { createAgent } from "./create-agent";
 import { getWebSearchTool } from "./providers/webSearchProvider";
+import { getSdgToolkitTools } from "./providers/sdgToolkitProvider";
 import { ModelMessage, streamText, stepCountIs } from "ai";
 import { setPendingFile, clearPendingFile } from "./file-context";
 import { getSessionUser } from "@/lib/auth/get-session-user";
+import { isSdgSlug } from "@/lib/data/registry";
 import {
   getOrCreateConversation,
   loadModelMessages,
@@ -60,12 +59,19 @@ export async function POST(req: Request) {
           sizeBytes: file.size,
         });
 
-        userMessage +=
-          (userMessage ? "\n\n" : "") +
-          `[File attached: "${file.name}" (${(file.size / 1024).toFixed(1)} KB, ${mimeType})]` +
-          (isCSV
-            ? "\nPlease analyze this CSV file. Call stageCsvForAnalysis with the filename above."
-            : "\nPlease store this file on Storacha. Call paidStoreFile with the filename above.");
+        if (isSdgSlug(agentSlug)) {
+          userMessage +=
+            (userMessage ? "\n\n" : "") +
+            `[File attached: "${file.name}" (${(file.size / 1024).toFixed(1)} KB, ${mimeType})]` +
+            "\nPlease analyze this CSV file. Call analyze_user_dataset with the filename above.";
+        } else {
+          userMessage +=
+            (userMessage ? "\n\n" : "") +
+            `[File attached: "${file.name}" (${(file.size / 1024).toFixed(1)} KB, ${mimeType})]` +
+            (isCSV
+              ? "\nPlease analyze this CSV file. Call stageCsvForAnalysis with the filename above."
+              : "\nPlease store this file on Storacha. Call paidStoreFile with the filename above.");
+        }
       }
     } else {
       const body = await req.json();
@@ -92,10 +98,16 @@ export async function POST(req: Request) {
 
     const agent = await createAgent({ agentSlug });
     const searchBudget = { count: 0 };
-    const tools = {
-      ...agent.tools,
-      ...getWebSearchTool({ agentSlug, budget: searchBudget }),
-    };
+
+    const tools = isSdgSlug(agentSlug)
+      ? {
+          ...agent.tools,
+          ...getSdgToolkitTools({ agentSlug, budget: searchBudget }),
+        }
+      : {
+          ...agent.tools,
+          ...getWebSearchTool({ agentSlug, budget: searchBudget }),
+        };
 
     let assistantText = "";
 

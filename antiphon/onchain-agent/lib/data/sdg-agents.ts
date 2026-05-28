@@ -1,24 +1,35 @@
 import type { SDGAgent } from "./types";
 import { SDG_SEEDS } from "./sdg-seeds";
 import { getUnSdgMeta } from "./un-sdg-meta";
+import { getSdgWorkflow, SHARED_WORKFLOW_TEMPLATE } from "@/lib/sdg/workflows";
 
 function slugFor(n: number) {
   return `sdg-${String(n).padStart(2, "0")}`;
 }
 
 function buildPromptBlock(agent: SDGAgent): string {
-  return `## SDG ${agent.number} Persona — ${agent.name} (${agent.role})
-Official goal: ${agent.sdgTitle}.
+  const wf = getSdgWorkflow(agent.slug);
+  const steps = wf?.workflowSteps ?? [];
+  const actors = wf?.humanActors ?? [];
 
-Mission context: ${agent.description}
+  return `## SDG ${agent.number} — ${agent.name} (${agent.role})
+Goal: ${agent.sdgTitle}
+Mission: ${agent.description}
 
-Before answering factual questions:
-1. Call \`web_search\` at most twice per user message (do not rephrase the same query). Prefer sources: ${agent.dataSources.join(", ")}.
-2. Read the tool JSON: if \`ok\` is false or \`results\` is empty, say live search returned nothing — cite these catalog sources by name and ask for CSV/upload. Never imply search succeeded when it did not.
-3. When \`ok\` is true, cite \`results[].url\` with year from snippets. Refuse generic answers without data.
-4. Use \`stageCsvForAnalysis\` for user tabular uploads; Storacha store/retrieve for evidence; ERC-8004 + x402 for paid services.
+Workflow: ${SHARED_WORKFLOW_TEMPLATE.join(" → ")}
+${steps.length > 0 ? `Example steps for ${agent.name}:\n${steps.map((s, i) => `${i + 1}. ${s}`).join("\n")}` : ""}
 
-Example tasks for this agent:
+Sources: ${agent.dataSources.join(", ")}
+${actors.length > 0 ? `Human actors: ${actors.join(", ")}` : ""}
+
+Rules:
+- Max 2 search_verified_evidence calls per user turn; do not rephrase the same query
+- After every tool call, read the JSON: if ok:false, use error_category to decide next action (never blind retry on permission or system_error)
+- Always cite result URLs; never invent statistics
+- If search returns nothing, say so and ask for CSV upload or human direction
+- Brief sections (compose_action_brief): Findings | Citations | Limits | Actors | Verify
+
+Example tasks:
 ${agent.exampleTasks.map((t) => `- ${t}`).join("\n")}`;
 }
 

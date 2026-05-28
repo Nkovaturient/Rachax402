@@ -44,7 +44,7 @@ export default function RootLayout({
         <PlatformAtmosphere />
         <div className="platform-content">
           {children}
-          <footer className="flex-none py-5 border-t border-white/[0.06] mt-auto glass-rail fixed bottom-0 w-full">
+          <footer className="flex-none py-5 border-t border-white/[0.06] mt-auto glass-rail bottom-0 w-full">
             <div className="max-w-6xl mx-auto px-4 text-center">
               <p className="text-xs text-muted">
                 <a

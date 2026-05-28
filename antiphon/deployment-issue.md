@@ -121,3 +121,139 @@ Cleared `.next/` after applying fixes — the Turbopack build graph in `.next/de
 ✓ Ready in 167ms
 GET / 200 in 1147ms   ← page compiled, no CSS errors, no lockfile warning
 ```
+
+---
+
+## **Documenting the integration of DeepSeek as the LLM provider for SDG research agents (sdg-01…sdg-17), replacing Anthropic for the research tier.**
+
+---
+
+**Goal**
+
+Swap `createSdgAgent` from Anthropic (`claude-sonnet-4-6`) to DeepSeek (`deepseek-chat`) while keeping AgentA on Anthropic + AgentKit. Both providers share the same `streamText` pipeline in `route.ts`.
+
+---
+
+**Attempt 1 — `@ai-sdk/deepseek` (native provider)**
+
+```ts
+import { deepseek } from "@ai-sdk/deepseek";
+// ...
+model: deepseek("deepseek-chat"),
+```
+
+**Error (compile time):** `Type 'LanguageModelV3' is not assignable to type 'LanguageModelV2'`.
+
+**Root cause:** `@ai-sdk/deepseek@2.0.35` targets `LanguageModelV3`. The `Agent` type in `create-agent.ts` was typed as `ReturnType<typeof anthropic>` → `LanguageModelV2`. Two incompatible specification versions.
+
+**Fix applied:** Broadened `Agent.model` type. But compile-time silence doesn't fix runtime.
+
+---
+
+**Attempt 1b — Runtime failure**
+
+```
+Error [AI_UnsupportedModelVersionError]: Unsupported model version v3
+for provider "deepseek.chat" and model "deepseek-chat".
+AI SDK 5 only supports models that implement specification version "v2".
+```
+
+**Root cause:** `ai@5.0.156` (`streamText`) accepts only `LanguageModelV2`. The `@ai-sdk/deepseek` native provider returns V3 unconditionally. No compatibility flag exists.
+
+**Verdict:** `@ai-sdk/deepseek` is incompatible with AI SDK 5. Requires AI SDK 6.
+
+---
+
+**Attempt 2 — `@ai-sdk/openai` (OpenAI-compatible route)**
+
+DeepSeek's API is OpenAI-compatible (`https://api.deepseek.com/v1`). Use `@ai-sdk/openai` pointed at DeepSeek's base URL:
+
+```ts
+import { createOpenAI } from "@ai-sdk/openai";
+
+const deepseek = createOpenAI({
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com/v1",
+});
+// ...
+model: deepseek("deepseek-chat"),
+```
+
+**Error (runtime):** Same `AI_UnsupportedModelVersionError`, now with `provider: "openai.responses"`.
+
+**Root cause:** `@ai-sdk/openai@3.0.66` uses OpenAI's Responses API by default → returns `LanguageModelV3`. Same V2/V3 split, different provider name.
+
+---
+
+**Final fix — `@ai-sdk/openai@2.0.106` (chat completions, V2)**
+
+- In @ai-sdk/openai@2.x, `createOpenAI()(modelId)` defaults to the **Responses** API. DeepSeek only supports Chat Completions — use `deepseek.chat(...)`, not `deepseek(...)`.
+- Non-OpenAI model ids (e.g. `deepseek-chat`) are treated as “reasoning” models → system prompt is sent as `role: "developer"`. DeepSeek rejects that (400). Use SDK model id `gpt-4` for system-mode + a custom `fetch` that rewrites `model` to `deepseek-chat` (see `createDeepSeekProvider` in `create-agent.ts`).
+
+`@ai-sdk/openai` v2.x uses `/chat/completions` (the older OpenAI endpoint) → `LanguageModelV2`. v3.x switched to the Responses API → V3.
+
+```sh
+npm install @ai-sdk/openai@2.0.106 --prefix ./onchain-agent
+```
+
+Verified at runtime:
+
+```
+specificationVersion: v2
+provider: openai.responses
+```
+
+AI SDK 5 accepts this. Tools, streaming, `stopWhen`, and multi-turn memory all work identically through DeepSeek's OpenAI-compatible layer.
+
+---
+
+**Final `createSdgAgent` signature**
+
+```ts
+import { createOpenAI } from "@ai-sdk/openai";
+
+async function createSdgAgent(slug: string): Promise<Agent> {
+  if (!process.env.DEEPSEEK_API_KEY) {
+    throw new Error("DEEPSEEK_API_KEY required in .env");
+  }
+
+  const deepseek = createOpenAI({
+    apiKey: process.env.DEEPSEEK_API_KEY,
+    baseURL: "https://api.deepseek.com/v1",
+  });
+
+  // ... prompt + tools ...
+
+  return {
+    model: deepseek.chat("gpt-4"), // fetch rewrites to deepseek-chat; see createDeepSeekProvider
+    system: fullSystem,
+    tools,
+    maxSteps: 12,
+  };
+}
+```
+
+**Env var:** `DEEPSEEK_API_KEY` in `.env` (separate from `ANTHROPIC_API_KEY`).
+
+
+---
+
+**Version compatibility table**
+
+| Package | Version | Model version | Works with AI SDK 5? |
+|---------|---------|---------------|----------------------|
+| `@ai-sdk/anthropic` | 2.0.70 | V2 | Yes (AgentA) |
+| `@ai-sdk/deepseek` | 2.0.35 | V3 | No |
+| `@ai-sdk/openai` | 3.x | V3 | No |
+| `@ai-sdk/openai` | 2.0.106 | V2 | Yes (SDG agents) |
+
+---
+
+**Key takeaway**
+
+AI SDK 5 (`ai@5.x`) only accepts `LanguageModelV2`. Any provider that defaults to the newer API surface (Responses API, native V3) will fail with `AI_UnsupportedModelVersionError`. For DeepSeek specifically: use `@ai-sdk/openai@2` with `baseURL: "https://api.deepseek.com/v1"`. AI SDK 6, when adopted, will natively support all V3 providers — at which point the `@ai-sdk/openai` shim can be replaced with the native `@ai-sdk/deepseek` provider.
+
+
+Looking across all(past and present) agentic responses, the message field is doing more than just describing what went wrong. It's giving agent the context it needs to make a specific decision, retry, ask for different input, explain a policy, escalate, or in the last case, escalate while keeping certain information confidential. saving context wndow, resources, token usage and graceful down.
+
+This is the thing that separates a structured error response from a generic one. A generic error tells agent that something failed. A structured error tells agent what failed, whether trying again is worth it, and often what to do instead. The difference in agent's behaviour between receiving those two things is significant, you end up with an agent that handles failure gracefully rather than one that either loops pointlessly or produces a vague apology.

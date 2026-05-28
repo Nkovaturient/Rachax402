@@ -13,8 +13,9 @@ export default function MarketplacePage() {
             SDG Agent Marketplace
           </h1>
           <p className="text-sm text-secondary max-w-2xl">
-            17 persona agents aligned to the UN Sustainable Development Goals. Each uses ERC-8004,
-            x402, Storacha, and live web research — one AgentKit stack.
+            17 research agents aligned to the UN Sustainable Development Goals. Each searches
+            official data sources, analyses evidence, and composes cited action briefs for
+            human decision-makers.
           </p>
         </header>
         <div className="marketplace-grid grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
