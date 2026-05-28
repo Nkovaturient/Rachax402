@@ -24,26 +24,18 @@ function ArenaNavButtons({
   mode: Mode;
   onOverview: () => void;
 }) {
-  const btnStyle = {
-    color: agent.accentColor,
-    borderColor: `${agent.accentColor}55`,
-    boxShadow: `0 0 20px -6px ${agent.accentColor}50`,
-  };
-  const chipStyle = { backgroundColor: `${agent.accentColor}22` };
-
   return (
     <nav
-      className="flex w-full items-center justify-between gap-4 mb-4 shrink-0"
+      className="flex w-full items-center justify-between gap-4 mb-4 shrink-0 arena-nav-btn"
+      style={{ ["--agent-accent" as string]: agent.accentColor }}
       aria-label="Arena navigation"
     >
       <Link
         href="/marketplace"
-        className="group inline-flex items-center gap-2 text-xs font-semibold tracking-wide px-4 py-2.5 rounded-xl glass border transition hover:brightness-110"
-        style={btnStyle}
+        className="group inline-flex items-center gap-2 text-xs font-semibold tracking-wide px-4 py-2.5 rounded-xl glass-liquid accent-rim text-primary transition hover:brightness-110"
       >
         <span
-          className="inline-flex w-6 h-6 items-center justify-center rounded-md text-[10px] transition group-hover:scale-105"
-          style={chipStyle}
+          className="inline-flex w-6 h-6 items-center justify-center rounded-md text-[10px] arena-nav-chip transition group-hover:scale-105"
           aria-hidden
         >
           ←
@@ -55,20 +47,18 @@ function ArenaNavButtons({
         <button
           type="button"
           onClick={onOverview}
-          className="group inline-flex items-center gap-2 text-xs font-semibold tracking-wide px-4 py-2.5 rounded-xl glass border transition hover:brightness-110"
-          style={btnStyle}
+          className="group inline-flex items-center gap-2 text-xs font-semibold tracking-wide px-4 py-2.5 rounded-xl glass-liquid accent-rim text-primary transition hover:brightness-110"
         >
           Overview
           <span
-            className="inline-flex w-6 h-6 items-center justify-center rounded-md text-[10px] transition group-hover:scale-105"
-            style={chipStyle}
+            className="inline-flex w-6 h-6 items-center justify-center rounded-md text-[10px] arena-nav-chip transition group-hover:scale-105"
             aria-hidden
           >
             →
           </span>
         </button>
       ) : (
-        <span className="w-[1px] h-9 opacity-0 pointer-events-none" aria-hidden />
+        <span className="w-px h-9 opacity-0 pointer-events-none" aria-hidden />
       )}
     </nav>
   );
@@ -77,12 +67,10 @@ function ArenaNavButtons({
 function WorkspaceCompactHeader({ agent }: { agent: SDGAgent }) {
   return (
     <div className="shrink-0 mb-3">
-      <p className="label-caps text-[#64748b] mb-0.5">
-        SDG {String(agent.number).padStart(2, "0")}
-      </p>
-      <h1 className="text-lg font-bold text-[#f8fafc] truncate">
+      <p className="label-caps text-muted mb-0.5">SDG {String(agent.number).padStart(2, "0")}</p>
+      <h1 className="font-display text-lg font-bold text-primary truncate">
         {agent.name}
-        <span className="text-[#64748b] font-normal"> · {agent.role}</span>
+        <span className="text-muted font-normal"> · {agent.role}</span>
       </h1>
     </div>
   );
@@ -125,6 +113,7 @@ export function AgentArenaWorkspace({ agent }: { agent: SDGAgent }) {
           ? "max-w-[min(1400px,96vw)] h-[calc(100vh-5.5rem)] py-4"
           : "max-w-6xl py-8"
       }`}
+      style={{ ["--agent-accent" as string]: agent.accentColor }}
     >
       {isWorkspace ? (
         <WorkspaceCompactHeader agent={agent} />
@@ -132,11 +121,7 @@ export function AgentArenaWorkspace({ agent }: { agent: SDGAgent }) {
         <ArenaHeaderBand agent={agent} />
       )}
 
-      <ArenaNavButtons
-        agent={agent}
-        mode={mode}
-        onOverview={() => setMode("dashboard")}
-      />
+      <ArenaNavButtons agent={agent} mode={mode} onOverview={() => setMode("dashboard")} />
 
       {mode === "dashboard" ? (
         <>
@@ -152,11 +137,11 @@ export function AgentArenaWorkspace({ agent }: { agent: SDGAgent }) {
             <button
               type="button"
               onClick={openWorkspace}
-              className="px-8 py-4 rounded-full text-sm font-bold border-2 border-white/25 text-[#f8fafc] hover:bg-white/5 transition w-full sm:w-auto max-w-md"
+              className="px-8 py-4 rounded-full text-sm font-bold glass-liquid accent-rim accent-rim-hover text-primary transition w-full sm:w-auto max-w-md"
             >
               Let&apos;s Get Down to Solving This
             </button>
-            <p className="text-xs text-[#64748b] text-center max-w-lg">
+            <p className="text-xs text-muted text-center max-w-lg">
               Data sources: {agent.dataSources.join(" · ")}
             </p>
           </div>

@@ -1,3 +1,5 @@
+import { GlassPanel } from "@/app/components/ui/GlassPanel";
+
 const STATS = [
   { value: "~22s", label: "Agent tool execution" },
   { value: "$0.01", label: "USDC per CSV analysis" },
@@ -7,16 +9,14 @@ const STATS = [
 export function LandingStats() {
   return (
     <section className="px-4 sm:px-6 pb-20">
-      <div className="max-w-4xl mx-auto glass rounded-2xl border border-white/[0.08] p-6 sm:p-10 grid grid-cols-1 sm:grid-cols-3 gap-8">
+      <GlassPanel variant="rail" className="max-w-4xl mx-auto p-6 sm:p-10 grid grid-cols-1 sm:grid-cols-3 gap-8">
         {STATS.map((s) => (
           <div key={s.label} className="text-center sm:text-left">
-            <p className="text-3xl sm:text-4xl font-bold font-mono text-[#f8fafc]">
-              {s.value}
-            </p>
-            <p className="text-sm text-[#64748b] mt-2">{s.label}</p>
+            <p className="text-3xl sm:text-4xl font-bold font-mono text-primary">{s.value}</p>
+            <p className="text-sm text-muted mt-2">{s.label}</p>
           </div>
         ))}
-      </div>
+      </GlassPanel>
     </section>
   );
 }

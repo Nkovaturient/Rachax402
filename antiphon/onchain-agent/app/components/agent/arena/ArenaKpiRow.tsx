@@ -1,4 +1,5 @@
 import type { SDGAgent } from "@/lib/data/types";
+import { GlassPanel } from "@/app/components/ui/GlassPanel";
 
 function KpiCard({
   label,
@@ -10,15 +11,15 @@ function KpiCard({
   accent?: string;
 }) {
   return (
-    <div className="glass rounded-xl border border-white/[0.06] p-3 min-w-[120px] flex-1">
-      <p className="text-[10px] text-[#64748b] uppercase tracking-wide">{label}</p>
+    <GlassPanel variant="card" accent={accent} className="p-3 min-w-[120px] flex-1">
+      <p className="text-[10px] text-muted uppercase tracking-wide">{label}</p>
       <p
-        className="text-xl font-mono font-bold mt-1"
-        style={accent ? { color: accent } : { color: "#e2e8f0" }}
+        className="text-xl font-mono font-bold mt-1 text-primary"
+        style={accent ? { color: accent } : undefined}
       >
         {typeof value === "number" ? value.toLocaleString() : value}
       </p>
-    </div>
+    </GlassPanel>
   );
 }
 
@@ -35,7 +36,7 @@ export function ArenaKpiRow({ agent }: { agent: SDGAgent }) {
           <KpiCard label="Actions" value={meta.actionCount} />
         </div>
       )}
-      <p className="label-caps text-[#64748b] text-[10px]">Agent focus metrics</p>
+      <p className="label-caps text-muted text-[10px]">Agent focus metrics</p>
       <div className="flex flex-wrap gap-2">
         {agent.systems.slice(0, 3).map((m) => (
           <KpiCard

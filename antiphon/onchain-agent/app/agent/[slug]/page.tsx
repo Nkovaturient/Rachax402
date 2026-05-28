@@ -24,7 +24,7 @@ export default async function AgentSlugPage({ params }: Props) {
   return (
     <Suspense
       fallback={
-        <div className="p-8 text-center text-sm text-[#94a3b8]">Loading arena…</div>
+        <div className="p-8 text-center text-sm text-secondary">Loading arena…</div>
       }
     >
       <ArenaDashboard agent={agent} />

@@ -8,15 +8,13 @@ import { useEffect, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 
 const PROTOCOL_LINKS = [
-  { label: "ERC-8004", href: "https://github.com/polus-dev/erc-8004", color: "text-[#8b5cf6]" },
-  { label: "x402", href: "https://github.com/coinbase/x402", color: "text-[#10b981]" },
-  // { label: "Storacha", href: "https://github.com/storacha/storacha", color: "text-[#00d4aa]" },
+  { label: "ERC-8004", href: "https://github.com/polus-dev/erc-8004", color: "text-erc8004" },
+  { label: "x402", href: "https://github.com/coinbase/x402", color: "text-x402" },
 ] as const;
 
 export function SiteHeader() {
   const pathname = usePathname();
   const onAgentRoute = pathname.startsWith("/agent");
-  const onLanding = pathname === "/";
   const [user, setUser] = useState<User | null>(null);
 
   useEffect(() => {
@@ -37,7 +35,7 @@ export function SiteHeader() {
   };
 
   return (
-    <header className="sticky top-0 z-50 glass border-b border-white/5 bg-[#0a0b0f]/80">
+    <header className="sticky top-0 z-50 glass-rail border-b border-white/[0.07] backdrop-saturate-150">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-4">
         <Link href="/" className="flex items-center gap-2.5 shrink-0">
           <Image
@@ -49,7 +47,7 @@ export function SiteHeader() {
             priority
             unoptimized
           />
-          <span className="text-lg font-semibold text-gradient-rachax hidden sm:inline">
+          <span className="font-display text-lg font-semibold text-gradient-rachax hidden sm:inline">
             Rachax402
           </span>
         </Link>
@@ -58,9 +56,7 @@ export function SiteHeader() {
           <Link
             href="/marketplace"
             className={`text-xs font-medium transition ${
-              pathname === "/marketplace"
-                ? "text-[#dfff00]"
-                : "text-[#94a3b8] hover:text-[#e2e8f0]"
+              pathname === "/marketplace" ? "text-neon" : "text-secondary hover:text-primary"
             }`}
           >
             Marketplace
@@ -69,8 +65,8 @@ export function SiteHeader() {
             href="/agent/agenta"
             className={`text-xs font-medium transition ${
               pathname === "/agent/agenta"
-                ? "text-[#07f49e]"
-                : "text-[#c02595] hover:text-[#e2e8f0]"
+                ? "text-x402"
+                : "text-[#c02595] hover:text-primary"
             }`}
           >
             Agent_A
@@ -90,25 +86,23 @@ export function SiteHeader() {
 
         <div className="flex items-center gap-2 shrink-0">
           {onAgentRoute && user && (
-            <span className="hidden lg:inline text-xs text-[#64748b] truncate max-w-[120px]">
+            <span className="hidden lg:inline text-xs text-muted truncate max-w-[120px]">
               {user.email}
             </span>
           )}
 
           {user ? (
-            <>
-              <button
-                type="button"
-                onClick={signOut}
-                className="text-xs text-[#94a3b8] hover:text-[#e2e8f0] px-2 py-1.5"
-              >
-                Sign out
-              </button>
-            </>
+            <button
+              type="button"
+              onClick={signOut}
+              className="text-xs text-secondary hover:text-primary px-2 py-1.5"
+            >
+              Sign out
+            </button>
           ) : (
             <Link
               href="/login"
-              className="px-4 py-2 rounded-full text-xs font-semibold border border-white/20 text-[#e2e8f0] hover:bg-white/5"
+              className="px-4 py-2 rounded-full text-xs font-semibold glass-liquid text-primary hover:brightness-110"
             >
               Sign in
             </Link>
