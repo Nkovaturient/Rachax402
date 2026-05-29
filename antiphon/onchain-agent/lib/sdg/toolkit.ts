@@ -37,9 +37,9 @@ export const SDG_TOOL_META = {
 
 export type SdgToolId = keyof typeof SDG_TOOL_META;
 
-// ── DEVCOMPASS tool descriptions (machine-readable, used in tool schemas) ──
+// ── tool descriptions (machine-readable, used in tool schemas) ──
 
-export const DEVCOMPASS_DESCRIPTIONS: Record<SdgToolId, string> = {
+export const TOOL_DESCRIPTIONS: Record<SdgToolId, string> = {
   lookup_official_indicator: `Look up structured statistics from official catalog sources.
 
 Purpose: Retrieve indicator values for a specific country and metric. Use this when the user asks for a known indicator (poverty rate, school enrollment, CO2 emissions) for a specific country or region.

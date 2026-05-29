@@ -5,7 +5,7 @@ import { boostQuery } from "@/lib/search/site-hints";
 import { searchTavily } from "@/lib/search/tavily";
 import { getPendingFile } from "../file-context";
 import { errorResult, type SdgToolResult } from "@/lib/sdg/tool-errors";
-import { DEVCOMPASS_DESCRIPTIONS } from "@/lib/sdg/toolkit";
+import { TOOL_DESCRIPTIONS } from "@/lib/sdg/toolkit";
 import type { WebSearchPayload } from "@/lib/search/types";
 
 const MAX_SEARCHES_PER_TURN = 2;
@@ -25,7 +25,7 @@ export function getSdgToolkitTools(options?: {
   // ── lookup_official_indicator ──────────────────────────────────────────
 
   tools.lookup_official_indicator = tool({
-    description: DEVCOMPASS_DESCRIPTIONS.lookup_official_indicator,
+    description: TOOL_DESCRIPTIONS.lookup_official_indicator,
     inputSchema: z.object({
       country_iso: z
         .string()
@@ -68,7 +68,7 @@ export function getSdgToolkitTools(options?: {
   // ── search_verified_evidence ───────────────────────────────────────────
 
   tools.search_verified_evidence = tool({
-    description: DEVCOMPASS_DESCRIPTIONS.search_verified_evidence,
+    description: TOOL_DESCRIPTIONS.search_verified_evidence,
     inputSchema: z.object({
       query: z.string().describe("Search query for current data or reports"),
     }),
@@ -111,7 +111,7 @@ export function getSdgToolkitTools(options?: {
   // ── analyze_user_dataset ───────────────────────────────────────────────
 
   tools.analyze_user_dataset = tool({
-    description: DEVCOMPASS_DESCRIPTIONS.analyze_user_dataset,
+    description: TOOL_DESCRIPTIONS.analyze_user_dataset,
     inputSchema: z.object({
       filename: z
         .string()
@@ -235,7 +235,7 @@ export function getSdgToolkitTools(options?: {
   // ── compose_action_brief ───────────────────────────────────────────────
 
   tools.compose_action_brief = tool({
-    description: DEVCOMPASS_DESCRIPTIONS.compose_action_brief,
+    description: TOOL_DESCRIPTIONS.compose_action_brief,
     inputSchema: z.object({
       findings: z
         .string()
@@ -274,7 +274,7 @@ export function getSdgToolkitTools(options?: {
   // ── escalate_for_human ─────────────────────────────────────────────────
 
   tools.escalate_for_human = tool({
-    description: DEVCOMPASS_DESCRIPTIONS.escalate_for_human,
+    description: TOOL_DESCRIPTIONS.escalate_for_human,
     inputSchema: z.object({
       reason: z
         .enum(["weak_evidence", "permission_denied", "high_stakes", "user_requested"])
