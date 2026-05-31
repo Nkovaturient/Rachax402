@@ -19,6 +19,8 @@ WORKDIR /app
 RUN apk add --no-cache python3 make g++ libc6-compat
 
 COPY package.json package-lock.json* .npmrc* ./
+# postinstall runs `prisma generate` — schema must exist before npm install
+COPY prisma ./prisma
 
 # Always npm. pnpm-lock.yaml in this repo is stale — do not use it.
 RUN npm install --legacy-peer-deps
@@ -31,14 +33,11 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
 ENV NEXT_TELEMETRY_DISABLED=1
-# Placeholder values prevent build-time crashes from missing runtime secrets.
-ENV ANTHROPIC_API_KEY=build-placeholder
-ENV CDP_API_KEY_ID=build-placeholder
-ENV CDP_API_KEY_SECRET=build-placeholder
-
-# Required so serverExternalPackages in next.config.js is respected.
-# (--no-turbopack flag was removed in Next.js 16)
-RUN npm run build
+# Placeholder values for build-time only (not persisted in runner image).
+RUN ANTHROPIC_API_KEY=build-placeholder \
+    CDP_API_KEY_ID=build-placeholder \
+    CDP_API_KEY_SECRET=build-placeholder \
+    npm run build
 
 # Fail fast if next.config.js is missing  output: 'standalone'
 RUN test -f .next/standalone/server.js || \
