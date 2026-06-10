@@ -1,0 +1,19 @@
+{
+  "_note": "Run `npm run eval` to regenerate. Do not hand-edit scores.",
+  "sdg-01": {
+    "toolSequenceMatch": true,
+    "briefComplete": true,
+    "noKeyLeakage": true
+  },
+  "agenta-no-x402-for-file-upload": {
+    "noForbiddenToolCalled": true,
+    "noKeyLeakage": true
+  },
+  "agenta-discover-before-pay": {
+    "toolOrderRespected": true,
+    "noKeyLeakage": true
+  },
+  "agenta-reputation-after-task": {
+    "toolOrderRespected": true
+  }
+}

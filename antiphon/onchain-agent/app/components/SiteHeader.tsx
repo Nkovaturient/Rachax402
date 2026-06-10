@@ -7,10 +7,10 @@ import { createClient } from "@/lib/supabase/client";
 import { useEffect, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 
-const PROTOCOL_LINKS = [
-  { label: "ERC-8004", href: "https://github.com/polus-dev/erc-8004", color: "text-erc8004" },
-  { label: "x402", href: "https://github.com/coinbase/x402", color: "text-x402" },
-] as const;
+// const PROTOCOL_LINKS = [
+//   { label: "ERC-8004", href: "https://github.com/polus-dev/erc-8004", color: "text-erc8004" },
+//   { label: "x402", href: "https://github.com/coinbase/x402", color: "text-x402" },
+// ] as const;
 
 export function SiteHeader() {
   const pathname = usePathname();
@@ -56,7 +56,7 @@ export function SiteHeader() {
           <Link
             href="/marketplace"
             className={`text-xs font-medium transition ${
-              pathname === "/marketplace" ? "text-neon" : "text-secondary hover:text-primary"
+              pathname === "/marketplace" ? "text-erc8004" : "text-erc8004 hover:text-primary"
             }`}
           >
             Marketplace
@@ -71,7 +71,7 @@ export function SiteHeader() {
           >
             Agent_A
           </Link>
-          {PROTOCOL_LINKS.map((p) => (
+          {/* {PROTOCOL_LINKS.map((p) => (
             <a
               key={p.label}
               href={p.href}
@@ -81,7 +81,7 @@ export function SiteHeader() {
             >
               {p.label}
             </a>
-          ))}
+          ))} */}
         </nav>
 
         <div className="flex items-center gap-2 shrink-0">

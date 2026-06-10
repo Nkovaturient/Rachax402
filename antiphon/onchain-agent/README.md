@@ -205,6 +205,47 @@ AgentA (smart wallet)                  agentB-server          CDP Facilitator
       │◀──── 200 + analysis result ──────────│                       │
 ```
 
+## LLMOps
+
+### Observability
+Agent runs are traced via [Sentry AI Agents](https://docs.sentry.io/ai/monitoring/agents/dashboards/) — each `agentSlug` appears as a named agent with tool spans, token usage, latency, and cost. No separate trace storage is needed.
+
+Set `SENTRY_DSN` (and `NEXT_PUBLIC_SENTRY_DSN`) to enable. Leave unset to disable silently.
+
+### Prompt & model versioning
+Every agent turn is tagged with a release (`AgentRelease` table). On first run, v1 is auto-seeded. To roll back:
+
+- Via `/admin` → Release panel → Rollback button
+- Via API: `POST /api/admin/releases` `{ agentSlug, version }`
+
+Rollback invalidates the server-side agent cache instantly — no redeploy needed.
+
+### Domain metrics
+One `AgentTurnMetric` row is written per turn after the stream closes:
+
+| Field | AgentA | SDG |
+|-------|--------|-----|
+| `x402Success` / `x402Usdc` | x402 payment outcome | — |
+| `briefComplete` | — | All 5 sections present |
+| `citationCount` | — | Tool-result URLs cited in reply |
+| `escalated` | — | `escalate_for_human` called |
+| `errorCategories` | tool error breakdown | tool error breakdown |
+
+### Admin panel
+`/admin` — protected by `ADMIN_EMAILS` env var (comma-separated Supabase emails).
+
+Shows 7-day KPIs for AgentA (x402 success, USDC) and all SDG agents (brief quality, citations, escalations), per-slug error rate and p95 latency, and release rollback controls. Links out to Sentry for trace drill-down.
+
+### Eval harness
+
+```sh
+npm run eval          # replay mode — no real API calls, runs in <1s
+```
+
+Golden fixtures in `eval/golden/`. Scorers: tool sequence, SDG brief completeness, AgentA routing safety (no X402ActionProvider on file upload), key-leakage check. Results compared against `eval/baseline.json`; exits non-zero on regression.
+
+Run before activating a new release via `/admin`.
+
 ## On-Chain Contracts
 
 | Contract | Address | Network |

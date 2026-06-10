@@ -6,6 +6,7 @@ import { searchTavily } from "@/lib/search/tavily";
 import { getPendingFile } from "../file-context";
 import { errorResult, type SdgToolResult } from "@/lib/sdg/tool-errors";
 import { TOOL_DESCRIPTIONS } from "@/lib/sdg/toolkit";
+import { parseUploadedFile, SUPPORTED_LABEL } from "@/lib/sdg/file-parser";
 import type { WebSearchPayload } from "@/lib/search/types";
 
 const MAX_SEARCHES_PER_TURN = 2;
@@ -108,10 +109,10 @@ export function getSdgToolkitTools(options?: {
     },
   });
 
-  // ── analyze_user_dataset ───────────────────────────────────────────────
+  // ── parse_uploaded_file ────────────────────────────────────────────────
 
-  tools.analyze_user_dataset = tool({
-    description: TOOL_DESCRIPTIONS.analyze_user_dataset,
+  tools.parse_uploaded_file = tool({
+    description: TOOL_DESCRIPTIONS.parse_uploaded_file,
     inputSchema: z.object({
       filename: z
         .string()
@@ -123,7 +124,7 @@ export function getSdgToolkitTools(options?: {
         return {
           ok: false,
           error_category: "not_found",
-          error: "No file found. Ask the user to upload a CSV.",
+          error: `No file found. Ask the user to upload a file (${SUPPORTED_LABEL}).`,
         };
       }
 
@@ -135,100 +136,15 @@ export function getSdgToolkitTools(options?: {
         };
       }
 
-      if (!pending.mimeType.includes("csv") && !filename.endsWith(".csv")) {
-        return {
-          ok: false,
-          error_category: "validation",
-          error: "File is not a CSV. Only CSV files can be analysed with this tool.",
-        };
-      }
-
       if (pending.sizeBytes > 10 * 1024 * 1024) {
         return {
           ok: false,
           error_category: "validation",
-          error: "File too large (max 10 MB). Ask user to trim columns or rows.",
+          error: "File too large (max 10 MB). Ask user to trim or split the file.",
         };
       }
 
-      try {
-        const csvText = Buffer.from(pending.base64, "base64").toString("utf-8");
-        const lines = csvText.trim().split("\n");
-        if (lines.length < 2) {
-          return {
-            ok: false,
-            error_category: "validation",
-            error: "CSV appears empty or has only a header. Check the file.",
-          };
-        }
-
-        const headers = lines[0].split(",").map((h) => h.trim().replace(/^"|"$/g, ""));
-        const rows = lines.slice(1).map((line) => {
-          const cells: string[] = [];
-          let inQuotes = false;
-          let cell = "";
-          for (const ch of line) {
-            if (ch === '"') { inQuotes = !inQuotes; continue; }
-            if (ch === "," && !inQuotes) { cells.push(cell.trim()); cell = ""; continue; }
-            cell += ch;
-          }
-          cells.push(cell.trim());
-          return cells;
-        });
-
-        const columnStats = headers.map((col, i) => {
-          const values = rows.map((r) => r[i] ?? "").filter((v) => v !== "");
-          const numericValues = values
-            .map((v) => parseFloat(v))
-            .filter((n) => !isNaN(n));
-          const nullCount = rows.length - values.length;
-
-          let stats: Record<string, unknown> = {
-            column: col,
-            total_rows: rows.length,
-            non_null: values.length,
-            null_count: nullCount,
-            null_pct: rows.length > 0 ? ((nullCount / rows.length) * 100).toFixed(1) + "%" : "0%",
-          };
-
-          if (numericValues.length > 0) {
-            const sorted = [...numericValues].sort((a, b) => a - b);
-            stats = {
-              ...stats,
-              type: "numeric",
-              min: sorted[0],
-              max: sorted[sorted.length - 1],
-              mean: (numericValues.reduce((a, b) => a + b, 0) / numericValues.length).toFixed(2),
-              median: sorted[Math.floor(sorted.length / 2)],
-            };
-          } else {
-            stats = {
-              ...stats,
-              type: "text",
-              unique_values: new Set(values).size,
-              sample_values: [...new Set(values)].slice(0, 5),
-            };
-          }
-
-          return stats;
-        });
-
-        return {
-          ok: true,
-          data: {
-            filename,
-            total_rows: rows.length,
-            total_columns: headers.length,
-            columns: columnStats,
-          },
-        };
-      } catch (err) {
-        return {
-          ok: false,
-          error_category: "system_error",
-          error: "Failed to parse CSV. Check file encoding (UTF-8 expected).",
-        };
-      }
+      return parseUploadedFile(pending);
     },
   });
 

@@ -1,5 +1,6 @@
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { withSentryConfig } from "@sentry/nextjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -68,7 +69,21 @@ const nextConfig = {
     "viem/accounts",
     "viem/chains",
     "ethers",
+
+    // File parsers (SDG parse_uploaded_file) — Node APIs / dynamic requires
+    "exceljs",
+    "mammoth",
+    "pdf-parse",
+    "pdfjs-dist",
   ],
 };
 
-export default nextConfig;
+export default withSentryConfig(nextConfig, {
+  org: process.env.SENTRY_ORG,
+  project: process.env.SENTRY_PROJECT,
+  authToken: process.env.SENTRY_AUTH_TOKEN,
+  tunnelRoute: "/sentry-tunnel",
+  // Suppress upload noise when DSN not configured
+  silent: !process.env.SENTRY_AUTH_TOKEN,
+  telemetry: false,
+});

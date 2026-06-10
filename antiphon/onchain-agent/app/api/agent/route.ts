@@ -7,6 +7,7 @@
  * Branches: AgentA (on-chain commerce) vs SDG agents (research + briefs).
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 import { createAgent } from "./create-agent";
 import { getWebSearchTool } from "./providers/webSearchProvider";
@@ -21,10 +22,18 @@ import {
   persistUserMessage,
   persistAssistantMessage,
 } from "@/lib/conversations";
+import { persistTurnMetric } from "@/lib/observability/domain-metrics";
 
 export const maxDuration = 300;
 
 export async function POST(req: Request) {
+  return Sentry.startSpan(
+    { op: "gen_ai.invoke_agent", name: "invoke_agent rachax402" },
+    () => _handlePost(req),
+  );
+}
+
+async function _handlePost(req: Request) {
   try {
     const session = await getSessionUser();
     if (!session) {
@@ -63,7 +72,7 @@ export async function POST(req: Request) {
           userMessage +=
             (userMessage ? "\n\n" : "") +
             `[File attached: "${file.name}" (${(file.size / 1024).toFixed(1)} KB, ${mimeType})]` +
-            "\nPlease analyze this CSV file. Call analyze_user_dataset with the filename above.";
+            "\nPlease read this file. Call parse_uploaded_file with the filename above, then analyze its contents.";
         } else {
           userMessage +=
             (userMessage ? "\n\n" : "") +
@@ -110,6 +119,7 @@ export async function POST(req: Request) {
         };
 
     let assistantText = "";
+    const collectedToolResults: { toolName: string; result: unknown }[] = [];
 
     const result = streamText({
       model: agent.model,
@@ -117,6 +127,13 @@ export async function POST(req: Request) {
       tools: tools as any,
       messages: historyForModel,
       stopWhen: stepCountIs(agent.maxSteps),
+      experimental_telemetry: {
+        isEnabled: !!process.env.SENTRY_DSN,
+        functionId: agentSlug,
+        metadata: { conversationId: conversation.id, releaseId: agent.releaseId },
+        recordInputs: false,
+        recordOutputs: false,
+      },
     });
 
     const encoder = new TextEncoder();
@@ -167,6 +184,7 @@ export async function POST(req: Request) {
                   ? output.slice(0, 120)
                   : JSON.stringify(output).slice(0, 120);
               console.log(`[AgentA +${elapsed}s] ← ${name}: ${snippet}`);
+              collectedToolResults.push({ toolName: name, result: output });
               enqueue(`a:${JSON.stringify({ toolName: name, result: output })}\n`);
             } else if (part.type === "error") {
               console.error(`[AgentA +${elapsed}s] error:`, (part as { error?: unknown }).error);
@@ -180,6 +198,15 @@ export async function POST(req: Request) {
           if (final) {
             await persistAssistantMessage(conversation.id, final);
           }
+
+          persistTurnMetric({
+            conversationId: conversation.id,
+            agentSlug,
+            releaseId: agent.releaseId,
+            durationMs: Date.now() - t0,
+            toolResults: collectedToolResults,
+            assistantText: final,
+          }).catch((err) => console.error("[domain-metrics] write failed:", err));
         } catch (err) {
           console.error("[AgentA] stream error:", err);
         } finally {
@@ -203,6 +230,7 @@ export async function POST(req: Request) {
       },
     });
   } catch (error) {
+    Sentry.captureException(error);
     console.error("[AgentA] Route error:", error);
     return NextResponse.json(
       {

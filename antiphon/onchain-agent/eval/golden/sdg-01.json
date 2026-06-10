@@ -1,0 +1,47 @@
+{
+  "agentSlug": "sdg-01",
+  "description": "Poverty indicator lookup → evidence search → action brief",
+  "userMessage": "What is Kenya's current poverty headcount rate and what financial inclusion interventions are most effective?",
+  "expectedToolSequence": [
+    "lookup_official_indicator",
+    "search_verified_evidence",
+    "compose_action_brief"
+  ],
+  "scorers": {
+    "toolSequenceMatch": true,
+    "briefComplete": true,
+    "noX402OnSdg": true,
+    "noKeyLeakage": true
+  },
+  "replayFixture": {
+    "lookup_official_indicator": {
+      "ok": true,
+      "data": {
+        "indicator_key": "poverty_headcount",
+        "country_iso": "KE",
+        "year_range": null,
+        "results": [
+          {
+            "title": "Kenya Poverty Rate 2022",
+            "url": "https://data.worldbank.org/indicator/SI.POV.DDAY?locations=KE",
+            "snippet": "36.1% of Kenya's population lives below $2.15/day (2016 PPP), World Bank 2022."
+          }
+        ]
+      }
+    },
+    "search_verified_evidence": {
+      "ok": true,
+      "results": [
+        {
+          "title": "Mobile money and financial inclusion in Kenya",
+          "url": "https://www.gsma.com/mobilefordevelopment/mobile-money-in-kenya",
+          "snippet": "M-Pesa reaches 67% of Kenyan adults, reducing transaction costs by 40%."
+        }
+      ]
+    },
+    "compose_action_brief": {
+      "ok": true,
+      "brief": "## Findings\nKenya poverty headcount at 36.1%. M-Pesa covers 67% of adults.\n## Citations\n- https://data.worldbank.org/indicator/SI.POV.DDAY?locations=KE\n- https://www.gsma.com/mobilefordevelopment/mobile-money-in-kenya\n## Limits\nData from 2016-2022; no household panel survey.\n## Actors\nCentral banks, Mobile money operators, MFI networks\n## Verify\n- Confirm latest WB poverty estimate\n- Cross-check FINDEX mobile account penetration"
+    }
+  }
+}

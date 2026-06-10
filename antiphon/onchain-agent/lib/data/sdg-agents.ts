@@ -23,7 +23,7 @@ Sources: ${agent.dataSources.join(", ")}
 ${actors.length > 0 ? `Human actors: ${actors.join(", ")}` : ""}
 
 Rules:
-- Max 2 search_verified_evidence calls per user turn; do not rephrase the same query
+- Max 5 search_verified_evidence calls per user turn; do not rephrase the same query
 - After every tool call, read the JSON: if ok:false, use error_category to decide next action (never blind retry on permission or system_error)
 - Always cite result URLs; never invent statistics
 - If search returns nothing, say so and ask for CSV upload or human direction

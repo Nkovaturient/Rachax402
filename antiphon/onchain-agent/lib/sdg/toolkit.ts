@@ -15,11 +15,11 @@ export const SDG_TOOL_META = {
       "Search the web for current statistics and reports from verified sources. Max 2 calls per turn. Returns title, snippet, and URL for each result.",
     capability: "search",
   },
-  analyze_user_dataset: {
-    label: "Analyze Dataset",
+  parse_uploaded_file: {
+    label: "Parse File",
     description:
-      "Parse and summarize a user-uploaded CSV file server-side. Returns column stats, row count, null percentages, and simple aggregates. No IPFS or blockchain storage.",
-    capability: "csv",
+      "Parse a user-uploaded file server-side (PDF, DOCX, XLSX, CSV, TXT, MD, JSON). Tabular files return column stats and sample rows; documents return extracted text. Unsupported formats return a clear error. No IPFS or blockchain storage.",
+    capability: "file",
   },
   compose_action_brief: {
     label: "Compose Brief",
@@ -76,28 +76,28 @@ Failure mapping:
 - rate_limit → max 2 searches per turn reached; use existing results or ask user for CSV
 - system_error → search provider error; do not retry, ask user for CSV upload`,
 
-  analyze_user_dataset: `Parse and summarize a user-uploaded CSV file server-side.
+  parse_uploaded_file: `Parse and summarize a user-uploaded file server-side.
 
-Purpose: Extract column statistics, row counts, null percentages, and simple aggregates from a CSV file the user has attached. No IPFS or blockchain storage — local server-side processing only.
+Purpose: Read the content of an attached file so you can ground your analysis in it. Supported formats: PDF, DOCX, XLSX, CSV, TXT, MD, JSON. Tabular files (CSV, XLSX) return column statistics and sample rows; documents (PDF, DOCX, TXT, MD, JSON) return extracted text (capped for long files). No IPFS or blockchain storage — local server-side processing only.
 
-When NOT to use: When no file is attached — ask the user to upload a CSV first.
+When NOT to use: When no file is attached — ask the user to upload a file first.
 
 Input fields:
 - filename (required): the exact filename shown in the user's [File attached: "..."] message
 
 Failure mapping:
-- not_found → file not found server-side; ask user to re-upload
+- not_found → no file attached; ask user to upload one
 - permission → cannot read file; escalate_for_human
-- validation → file is not valid CSV or is empty; tell user the format issue
-- timeout → file too large; ask user to trim columns or rows
+- validation → unsupported format or empty file; relay the error verbatim to the user (e.g. "File format not supported. Try uploading: PDF, DOCX, XLSX, CSV, TXT, MD, JSON.")
+- timeout → file too large; ask user to trim or split it
 - rate_limit → N/A for this tool
-- system_error → parsing crashed; ask user to check file encoding`,
+- system_error → parsing crashed (corrupt, password-protected, or scanned image-only PDF); tell the user the likely cause`,
 
   compose_action_brief: `Draft a structured action brief for human decision-makers.
 
 Purpose: Synthesize findings from prior tool calls into a structured brief with mandatory sections. The model fills content from lookup/search/analyze results.
 
-When NOT to use: When no tools have been called yet — gather evidence first via lookup_official_indicator, search_verified_evidence, or analyze_user_dataset.
+When NOT to use: When no tools have been called yet — gather evidence first via lookup_official_indicator, search_verified_evidence, or parse_uploaded_file.
 
 Input fields:
 - findings (required): bullet-point summary of key evidence from this session

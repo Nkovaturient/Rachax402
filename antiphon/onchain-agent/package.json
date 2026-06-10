@@ -10,7 +10,8 @@
     "lint": "next lint",
     "postinstall": "prisma generate",
     "db:migrate": "prisma migrate dev",
-    "db:push": "prisma db push"
+    "db:push": "prisma db push",
+    "eval": "EVAL_REPLAY=1 npx tsx scripts/eval-run.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^2.0.67",
@@ -23,6 +24,7 @@
     "@langchain/langgraph": "^0.2.21",
     "@langchain/openai": "^0.3.14",
     "@prisma/client": "^6.19.3",
+    "@sentry/nextjs": "^10.57.0",
     "@solana/web3.js": "^1.98.0",
     "@storacha/client": "^2.1.2",
     "@supabase/ssr": "^0.10.3",
@@ -34,8 +36,11 @@
     "@x402/fetch": "^2.7.0",
     "ai": "^5.0.141",
     "bs58": "^6.0.0",
+    "exceljs": "^4.4.0",
     "graphql": "^16.9.0",
+    "mammoth": "^1.12.0",
     "next": "^16.0.10",
+    "pdf-parse": "^2.4.5",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "react-markdown": "^10.0.0",
@@ -47,6 +52,7 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4.0.0",
     "@types/node": "^22",
+    "@types/pdf-parse": "^1.1.5",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "prisma": "^6.19.3",

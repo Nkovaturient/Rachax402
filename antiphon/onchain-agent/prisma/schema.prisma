@@ -42,3 +42,39 @@ model Message {
 
   @@index([conversationId])
 }
+
+model AgentRelease {
+  id         String   @id @default(cuid())
+  agentSlug  String
+  version    Int
+  modelId    String
+  promptHash String
+  isActive   Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  turns AgentTurnMetric[]
+
+  @@unique([agentSlug, version])
+  @@index([agentSlug, isActive])
+}
+
+model AgentTurnMetric {
+  id              String   @id @default(cuid())
+  conversationId  String
+  agentSlug       String
+  releaseId       String
+  release         AgentRelease @relation(fields: [releaseId], references: [id])
+  durationMs      Int
+  toolCallCount   Int
+  toolErrorCount  Int
+  errorCategories Json?
+  x402Success     Boolean?
+  x402Usdc        Float?
+  citationCount   Int?
+  briefComplete   Boolean?
+  escalated       Boolean  @default(false)
+  createdAt       DateTime @default(now())
+
+  @@index([agentSlug, createdAt])
+  @@index([releaseId])
+}

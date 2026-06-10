@@ -17,6 +17,7 @@ import { getSdgToolkitTools } from "./providers/sdgToolkitProvider";
 import { getSystemPromptBlock, isSdgSlug } from "@/lib/data/registry";
 import { getAgentaBasePrompt } from "./system-prompts/agenta";
 import { getSdgBasePrompt } from "./system-prompts/sdg-base";
+import { resolveRelease, updatePromptHash } from "@/lib/agent/release";
 
 /**
  * Converts AgentKit tools from AI SDK v4 format (`parameters`) to v5 format (`inputSchema`).
@@ -72,9 +73,14 @@ type Agent = {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   model: any;
   maxSteps: number;
+  releaseId: string;
 };
 
-const agentCache = new Map<string, Agent>();
+export const agentCache = new Map<string, Agent>();
+
+export function invalidateAgentCache(agentSlug: string) {
+  agentCache.delete(agentSlug);
+}
 
 /** DeepSeek API model id (sent on the wire). */
 const DEEPSEEK_CHAT_MODEL = "deepseek-chat";
@@ -124,7 +130,7 @@ function createDeepSeekProvider() {
   });
 }
 
-async function createAgentaAgent(): Promise<Agent> {
+async function createAgentaAgent(releaseId: string): Promise<Agent> {
   if (!process.env.ANTHROPIC_API_KEY) {
     throw new Error("ANTHROPIC_API_KEY required in .env");
   }
@@ -151,6 +157,8 @@ async function createAgentaAgent(): Promise<Agent> {
   const overlay = getSystemPromptBlock("agenta");
   const fullSystem = overlay ? `${system}\n\n${overlay}` : system;
 
+  await updatePromptHash(releaseId, fullSystem);
+
   const rawAgentKitTools = getVercelAITools(agentkit);
 
   console.log("[AgentKit tools] Before sanitizing:");
@@ -176,10 +184,11 @@ async function createAgentaAgent(): Promise<Agent> {
     system: fullSystem,
     tools,
     maxSteps: 15,
+    releaseId,
   };
 }
 
-async function createSdgAgent(slug: string): Promise<Agent> {
+async function createSdgAgent(slug: string, releaseId: string): Promise<Agent> {
   if (!process.env.DEEPSEEK_API_KEY) {
     throw new Error("DEEPSEEK_API_KEY required in .env");
   }
@@ -190,6 +199,8 @@ async function createSdgAgent(slug: string): Promise<Agent> {
   const overlay = getSystemPromptBlock(slug);
   const fullSystem = overlay ? `${basePrompt}\n\n${overlay}` : basePrompt;
 
+  await updatePromptHash(releaseId, fullSystem);
+
   const tools = getSdgToolkitTools({ agentSlug: slug });
 
   return {
@@ -197,6 +208,7 @@ async function createSdgAgent(slug: string): Promise<Agent> {
     system: fullSystem,
     tools,
     maxSteps: 12,
+    releaseId,
   };
 }
 
@@ -207,12 +219,14 @@ export async function createAgent(options?: {
   const cached = agentCache.get(slug);
   if (cached) return cached;
 
+  const release = await resolveRelease(slug);
+
   let agent: Agent;
 
   if (isSdgSlug(slug)) {
-    agent = await createSdgAgent(slug);
+    agent = await createSdgAgent(slug, release.id);
   } else {
-    agent = await createAgentaAgent();
+    agent = await createAgentaAgent(release.id);
   }
 
   agentCache.set(slug, agent);

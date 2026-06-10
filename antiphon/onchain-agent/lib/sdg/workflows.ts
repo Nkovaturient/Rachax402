@@ -167,6 +167,6 @@ export function getSdgWorkflow(slug: string): SdgWorkflow | undefined {
 export const SHARED_WORKFLOW_TEMPLATE = [
   "lookup_official_indicator",
   "search_verified_evidence",
-  "analyze_user_dataset (if CSV attached)",
+  "parse_uploaded_file (if a file is attached)",
   "compose_action_brief",
 ] as const;
