@@ -1,0 +1,14 @@
+{
+    "mcpServers": {
+        "support-agent-tools": {
+            "command": "node",
+            "args": [
+                "dist/index.js"
+            ],
+            "cwd": ".", //${workspaceFolder}/support-agent
+            "env": {
+                "ANTHROPIC_API_KEY": "${env:ANTHROPIC_API_KEY}"
+            }
+        }
+    }
+}
