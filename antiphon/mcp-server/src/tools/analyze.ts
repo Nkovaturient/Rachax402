@@ -1,39 +1,35 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { getStorachaClient } from "../lib/storacha.js";
+import { pinFileToPinata, ipfsGatewayUrl } from "../lib/pinata.js";
 import { fetchWithX402Payment } from "../lib/x402.js";
 
 export function registerAnalyzeTools(server: McpServer) {
   server.tool(
     "stage_csv",
-    "Upload a CSV file to Storacha IPFS for FREE to get an inputCID. Required before calling analyze_csv — the analyzer needs a CID, not raw bytes. Uses the MCP server's own Storacha credentials (no payment).",
+    "Upload a CSV file to Pinata IPFS for FREE to get an inputCID. Required before analyze_csv.",
     {
       base64CsvData: z.string().describe("Base64-encoded CSV content"),
       filename: z.string().describe("Original filename e.g. 'sales-data.csv'"),
     },
     async ({ base64CsvData, filename }) => {
       try {
-        const client = await getStorachaClient();
         const buffer = Buffer.from(base64CsvData, "base64");
-        const file = new File([buffer], filename, { type: "text/csv" });
-
-        const cid = await client.uploadFile(file);
-        const cidStr = cid.toString();
+        const { cid, url } = await pinFileToPinata(buffer, filename, "text/csv");
 
         return {
           content: [{
             type: "text" as const,
             text: JSON.stringify({
-              inputCID: cidStr,
+              inputCID: cid,
               filename,
               sizeBytes: buffer.length,
-              ipfsUrl: `https://w3s.link/ipfs/${cidStr}`,
+              ipfsUrl: url,
             }),
           }],
         };
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
-        return { content: [{ type: "text" as const, text: `Storacha staging failed: ${msg}` }], isError: true };
+        return { content: [{ type: "text" as const, text: `Pinata staging failed: ${msg}` }], isError: true };
       }
     }
   );

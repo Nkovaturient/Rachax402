@@ -35,7 +35,7 @@ import { privateKeyToAccount } from 'viem/accounts';
 import { baseSepolia } from 'viem/chains';
 import dotenv from 'dotenv';
 import { AgentIdentityABI } from './ABI/AgentIdentityABI.js';
-import { initStorachaClient } from './initStoracha.js';
+import { pinJsonToPinata, ipfsGatewayUrl } from './initPinata.js';
 
 dotenv.config();
 
@@ -63,22 +63,19 @@ async function fetchCurrentCard(agentAddress) {
 
     if (!cid) throw new Error(`No agent card CID found on-chain for ${agentAddress}`);
     console.log(`   📖 Current card CID: ${cid}`);
-    console.log(`   🔗 View: https://w3s.link/ipfs/${cid}`);
+    console.log(`   🔗 View: ${ipfsGatewayUrl(cid)}`);
 
-    const res = await fetch(`https://w3s.link/ipfs/${cid}`);
+    const res = await fetch(ipfsGatewayUrl(cid));
     if (!res.ok) throw new Error(`IPFS fetch failed for CID ${cid}: ${res.statusText}`);
 
     return { oldCID: cid.toString(), card: await res.json() };
 }
 
-async function uploadUpdatedCard(storachaClient, card, filename) {
-    const blob = new Blob([JSON.stringify(card, null, 2)], { type: 'application/json' });
-    const file = new File([blob], filename);
-    const newCID = await storachaClient.uploadFile(file);
-    const cidStr = newCID.toString();
-    console.log(`   📤 New card uploaded: ${cidStr}`);
-    console.log(`   🔗 View: https://w3s.link/ipfs/${cidStr}`);
-    return cidStr;
+async function uploadUpdatedCard(card, filename) {
+    const { cid, url } = await pinJsonToPinata(card, filename);
+    console.log(`   📤 New card uploaded: ${cid}`);
+    console.log(`   🔗 View: ${url}`);
+    return cid;
 }
 
 async function submitUpdate(privateKey, newCID, agentAddress, label) {
@@ -127,7 +124,7 @@ async function submitUpdate(privateKey, newCID, agentAddress, label) {
 
 // ── Update DataAnalyzer ───────────────────────────────────────────────────────
 
-async function updateDataAnalyzer(storachaClient) {
+async function updateDataAnalyzer() {
     console.log('\n═'.repeat(60));
     console.log('🔄 Updating DataAnalyzer Agent Card');
     console.log('═'.repeat(60));
@@ -166,7 +163,7 @@ async function updateDataAnalyzer(storachaClient) {
     }
 
     // 3. Upload updated card
-    const newCID = await uploadUpdatedCard(storachaClient, updatedCard, 'agentcard-data-analyzer.json');
+    const newCID = await uploadUpdatedCard(updatedCard, 'agentcard-data-analyzer.json');
 
     if (newCID === oldCID) {
         console.log('   ⏭️  CID unchanged (endpoint was already up to date). Skipping on-chain update.');
@@ -184,17 +181,17 @@ async function updateDataAnalyzer(storachaClient) {
 
 // ── Update StorachaAgent ──────────────────────────────────────────────────────
 
-async function updateStorachaService(storachaClient) {
+async function updateStorageService() {
     console.log('\n═'.repeat(60));
-    console.log('🔄 Updating StorachaAgent Card');
+    console.log('🔄 Updating IpfsStorageAgent Card');
     console.log('═'.repeat(60));
     console.log(`   New endpoint: ${STORAGE_URL}/upload`);
 
-    const privateKey = process.env.STORACHA_PROVIDER_PRIVATE_KEY;
+    const privateKey = process.env.STORAGE_PROVIDER_PRIVATE_KEY || process.env.STORACHA_PROVIDER_PRIVATE_KEY;
     if (!privateKey) {
         throw new Error(
-            'STORACHA_PROVIDER_PRIVATE_KEY not set in .env\n' +
-            '  This is the key that registered 0x9D48b65B... on the ERC-8004 registry'
+            'STORAGE_PROVIDER_PRIVATE_KEY not set in .env\n' +
+            '  This is the key that registered the storage agent on the ERC-8004 registry'
         );
     }
 
@@ -207,10 +204,10 @@ async function updateStorachaService(storachaClient) {
         console.log('   📎 Using known card template instead');
         oldCID = 'unknown';
         card = {
-            name: "StorachaAgent",
-            version: "1.0.0",
-            description: "Decentralized IPFS file storage service",
-            capabilities: ["Storacha", "file-storage", "ipfs", "decentralized-storage"],
+            name: "IpfsStorageAgent",
+            version: "1.1.0",
+            description: "Decentralized IPFS file storage service (Pinata)",
+            capabilities: ["file-storage", "ipfs", "decentralized-storage"],
             pricing: { upload: 0.1, retrieve: 0.005, currency: "USDC", network: "base-sepolia" },
             endpoint: "http://localhost:8000/upload",
             walletAddress: STORACHA_AGENT_ADDRESS,
@@ -240,7 +237,7 @@ async function updateStorachaService(storachaClient) {
     }
 
     // 3. Upload updated card
-    const newCID = await uploadUpdatedCard(storachaClient, updatedCard, 'agentcard-storacha.json');
+    const newCID = await uploadUpdatedCard(updatedCard, 'agentcard-ipfs-storage.json');
 
     if (newCID === oldCID) {
         console.log('   ⏭️  CID unchanged (endpoint was already up to date). Skipping on-chain update.');
@@ -248,9 +245,9 @@ async function updateStorachaService(storachaClient) {
     }
 
     // 4. Submit on-chain update
-    const txHash = await submitUpdate(privateKey, newCID, STORACHA_AGENT_ADDRESS, 'StorachaAgent');
+    const txHash = await submitUpdate(privateKey, newCID, STORACHA_AGENT_ADDRESS, 'IpfsStorageAgent');
 
-    console.log(`\n🎉 StorachaAgent card updated!`);
+    console.log(`\n🎉 IpfsStorageAgent card updated!`);
     console.log(`   Old CID: ${oldCID}`);
     console.log(`   New CID: ${newCID}`);
     console.log(`   Tx:      ${txHash}\n`);
@@ -270,16 +267,13 @@ async function main() {
     console.log(`  Storage URL:  ${STORAGE_URL}`);
     console.log(`  Updating:     ${service}\n`);
 
-    // Single Storacha client shared by both updates
-    const storachaClient = await initStorachaClient();
-
     try {
         if (service === 'analyzer' || service === 'both') {
-            await updateDataAnalyzer(storachaClient);
+            await updateDataAnalyzer();
         }
 
-        if (service === 'storacha' || service === 'both') {
-            await updateStorachaService(storachaClient);
+        if (service === 'storacha' || service === 'storage' || service === 'both') {
+            await updateStorageService();
         }
 
         console.log('\n' + '═'.repeat(60));

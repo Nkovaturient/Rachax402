@@ -21,13 +21,13 @@ import { ExactEvmScheme } from '@x402/evm/exact/server';
 import { declareDiscoveryExtension } from '@x402/extensions/bazaar';
 import { facilitator as cdpFacilitator } from '@coinbase/x402';
 import Papa from 'papaparse';
-import { uploadFileToStoracha } from './initStoracha.js';
+import { uploadFileToPinata, ipfsGatewayUrl } from './initPinata.js';
 import dotenv from 'dotenv';
 
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || process.env.PROVIDER_PORT || 8001;
+const PORT = process.env.PROVIDER_PORT || process.env.AGENTB_PORT || 8001;
 
 app.use(cors({
   exposedHeaders: ['PAYMENT-REQUIRED', 'PAYMENT-RESPONSE', 'X-PAYMENT-RESPONSE']
@@ -41,7 +41,7 @@ const FACILITATOR_URL = process.env.FACILITATOR_URL || 'https://facilitator.xpay
 // CDP facilitator supports Base mainnet + Base Sepolia, and Permit2 (smart wallet compatible). xpay is EIP-3009 only.
 // Align onchain-agent: NETWORK_ID=base-mainnet + X402 eip155:8453, or base-sepolia + eip155:84532 (or set X402_NETWORK explicitly).
 const useCdp = !!(process.env.CDP_API_KEY_ID && process.env.CDP_API_KEY_SECRET);
-const NETWORK = process.env.X402_NETWORK || (useCdp ? 'eip155:8453' : 'eip155:84532');
+const NETWORK = process.env.X402_NETWORK || 'eip155:84532';
 
 console.log('🔧 Initializing Agent B Server...');
 console.log(`   Recipient: ${RECIPIENT_ADDRESS}`);
@@ -137,7 +137,7 @@ app.get('/health', (req, res) => {
     network: NETWORK,
     facilitator: useCdp ? 'CDP (production)' : FACILITATOR_URL,
     bazaarEnabled: true,
-    storachaReady: true,
+    pinataReady: true,
     endpoints: {
       analyze: {
         method: 'POST',
@@ -276,12 +276,12 @@ async function processAnalysisTask(inputCID, requirements) {
   console.log(`   Requirements: ${requirements}`);
 
   try {
-    // Step 1: Download CSV data from Storacha
-    console.log('   📥 Downloading data from Storacha...');
-    const response = await fetch(`https://w3s.link/ipfs/${inputCID}`);
+    // Step 1: Download CSV data from Pinata gateway
+    console.log('   📥 Downloading data from IPFS...');
+    const response = await fetch(ipfsGatewayUrl(inputCID));
     
     if (!response.ok) {
-      throw new Error(`Failed to fetch data from Storacha: ${response.statusText}`);
+      throw new Error(`Failed to fetch data from IPFS: ${response.statusText}`);
     }
     
     const csvContent = await response.text();
@@ -293,13 +293,15 @@ async function processAnalysisTask(inputCID, requirements) {
     const formattedResults = formatAnalysisResults(analysisResult);
     console.log(`   ✅ Analysis complete: ${analysisResult.statistics.rowCount} rows processed`);
 
-    // Step 3: Upload results to Storacha
-    console.log('   📤 Uploading results to Storacha...');
-    const resultsBlob = new Blob([formattedResults], { type: 'text/plain' });
-    const resultsFile = new File([resultsBlob], 'analysis-results.txt', { 
-      type: 'text/plain' 
+    // Step 3: Upload results to Pinata
+    console.log('   📤 Uploading results to Pinata...');
+    const resultsBuffer = Buffer.from(formattedResults, 'utf-8');
+    const uploadResult = await uploadFileToPinata({
+      name: 'analysis-results.txt',
+      type: 'text/plain',
+      size: resultsBuffer.length,
+      buffer: resultsBuffer,
     });
-    const uploadResult = await uploadFileToStoracha(resultsFile);
     const resultCID = uploadResult.cid;
     console.log(`   ✅ Results uploaded: ${resultCID}`);
 
@@ -400,7 +402,7 @@ async function start() {
   try {
     await warmAndInitialize();
 
-    app.listen(PORT, () => {
+    const server = app.listen(PORT, () => {
       console.log(`\n🤖 Agent B Provider running on http://localhost:${PORT}`);
       console.log(`💰 Recipient: ${RECIPIENT_ADDRESS}`);
       console.log(`🌐 Network: ${NETWORK}`);
@@ -409,6 +411,10 @@ async function start() {
       console.log(`\n📋 Protected endpoints:`);
       console.log(`   POST /analyze - $0.01 per analysis`);
       console.log(`\n💡 Ready to process data analysis requests!\n`);
+    });
+    server.on('error', (err) => {
+      console.error(`❌ Agent B failed to bind port ${PORT}:`, err.message);
+      process.exit(1);
     });
   } catch (error) {
     console.error('❌ Failed to start server:', error.message);

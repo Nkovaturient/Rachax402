@@ -3,7 +3,7 @@
 #
 # Deploys TWO separate Railway services from one image:
 #   SERVICE_TYPE=analyzer → agentB-server.js  (PORT=8001)
-#   SERVICE_TYPE=storage  → storacha-server.js (PORT=8000)
+#   SERVICE_TYPE=storage  → pinata-server.js (PORT=8000)
 #
 # Build locally:
 #   docker build -t rachax402-server .
@@ -40,8 +40,8 @@ COPY --from=deps /app/node_modules ./node_modules
 # Copy ONLY the server source files needed at runtime.
 # DO NOT copy .env — secrets are injected as Railway env vars.
 COPY --chown=agentb:agentb agentB-server.js   .
-COPY --chown=agentb:agentb storacha-server.js .
-COPY --chown=agentb:agentb initStoracha.js    .
+COPY --chown=agentb:agentb pinata-server.js  .
+COPY --chown=agentb:agentb initPinata.js     .
 COPY --chown=agentb:agentb package.json       .
 
 USER agentb
@@ -60,8 +60,8 @@ CMD ["sh", "-c", "\
     echo '🔬 Starting DataAnalyzer on port '${PORT:-${PROVIDER_PORT:-8001}}'...'; \
     node agentB-server.js; \
   elif [ \"$SERVICE_TYPE\" = 'storage' ]; then \
-    echo '📦 Starting StorachaStorage on port '${PORT:-8000}'...'; \
-    node storacha-server.js; \
+    echo '📦 Starting IpfsStorage on port '${PORT:-8000}'...'; \
+    node pinata-server.js; \
   else \
     echo '❌ SERVICE_TYPE env var must be \"analyzer\" or \"storage\"'; \
     exit 1; \

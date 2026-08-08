@@ -1,0 +1,21 @@
+[
+  {
+    "name": "AntiphonDataAnalyzer",
+    "serviceKey": "DataAnalyzer",
+    "capabilityTags": ["csv-analysis", "statistics", "data-transformation"],
+    "endpoint": "https://rachax402-analyzer-service.up.railway.app",
+    "routes": [{ "method": "POST", "path": "/analyze", "price": "$0.01", "pricingKey": "baseRate" }],
+    "pricing": { "baseRate": 0.01, "currency": "USDC" }
+  },
+  {
+    "name": "IpfsStorageAgent",
+    "serviceKey": "storage",
+    "capabilityTags": ["file-storage", "ipfs", "decentralized-storage"],
+    "endpoint": "https://rachax402-storacha-service.up.railway.app",
+    "routes": [
+      { "method": "POST", "path": "/upload", "price": "$0.1", "pricingKey": "upload" },
+      { "method": "GET", "path": "/retrieve", "price": "$0.005", "pricingKey": "retrieve" }
+    ],
+    "pricing": { "upload": 0.1, "retrieve": 0.005, "currency": "USDC" }
+  }
+]

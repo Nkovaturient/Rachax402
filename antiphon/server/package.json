@@ -1,19 +1,19 @@
 {
-  "name": "storacha-x402-gated-agent",
+  "name": "pinata-x402-gated-agent",
   "version": "1.0.0",
-  "description": "Handling x402 Payment Middleware and providing Storacha Storage Service",
-  "main": "storacha-server.js",
+  "description": "Handling x402 Payment Middleware and providing Pinata IPFS Storage Service",
+  "main": "pinata-server.js",
   "type": "module",
   "scripts": {
-    "dev": "node storacha-server.js",
+    "dev": "node pinata-server.js",
     "dev:agent": "node agentB-server.js",
-    "dev:both": "concurrently \"node storacha-server.js\" \"node agentB-server.js\"",
-    "start": "node storacha-server.js",
+    "dev:both": "concurrently \"node pinata-server.js\" \"node agentB-server.js\"",
+    "start": "node pinata-server.js",
     "test": "node test-client.js"
   },
   "keywords": [
     "x402",
-    "storacha",
+    "pinata",
     "ipfs",
     "bazaar",
     "payment",
@@ -23,7 +23,6 @@
   "license": "ISC",
   "dependencies": {
     "@coinbase/x402": "^2.1.0",
-    "@storacha/client": "^2.0.3",
     "@x402/axios": "^2.5.0",
     "@x402/core": "^2.5.0",
     "@x402/evm": "^2.5.0",
