@@ -40,7 +40,7 @@ export function SiteHeader() {
         <Link href="/" className="flex items-center gap-2.5 shrink-0">
           <Image
             src="/Rachax402-logo.png"
-            alt="Rachax402"
+            alt="Antiphon"
             width={32}
             height={32}
             className="rounded-lg"
@@ -48,7 +48,7 @@ export function SiteHeader() {
             unoptimized
           />
           <span className="font-display text-lg font-semibold text-gradient-rachax hidden sm:inline">
-            Rachax402
+            Antiphon
           </span>
         </Link>
 

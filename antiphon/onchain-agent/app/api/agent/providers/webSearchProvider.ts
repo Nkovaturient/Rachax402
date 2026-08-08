@@ -7,7 +7,7 @@ import type { WebSearchPayload } from "@/lib/search/types";
 
 const MAX_SEARCHES_PER_TURN = 2;
 
-export type SearchBudget = { count: number };
+export type SearchBudget = { searchCount: number };
 
 export function getWebSearchTool(options?: {
   agentSlug?: string;
@@ -28,8 +28,8 @@ export function getWebSearchTool(options?: {
       execute: async ({ query }): Promise<WebSearchPayload> => {
         const budget = options?.budget;
         if (budget) {
-          budget.count += 1;
-          if (budget.count > MAX_SEARCHES_PER_TURN) {
+          budget.searchCount += 1;
+          if (budget.searchCount > MAX_SEARCHES_PER_TURN) {
             return {
               query,
               ok: false,

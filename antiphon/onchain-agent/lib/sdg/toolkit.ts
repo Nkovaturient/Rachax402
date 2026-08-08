@@ -33,6 +33,12 @@ export const SDG_TOOL_META = {
       "Flag this session for human review when evidence is weak, permissions are denied, or stakes are high. Returns a handoff summary for the human reviewer.",
     capability: "escalate",
   },
+  request_onchain_service: {
+    label: "On-chain Service",
+    description:
+      "Delegate to AgentA for paid x402 on-chain data when official search is insufficient. Returns structured result with endpoint citation.",
+    capability: "onchain",
+  },
 } as const;
 
 export type SdgToolId = keyof typeof SDG_TOOL_META;
@@ -121,6 +127,22 @@ Input fields:
 - summary (required): what the agent attempted, what failed, what a human should review
 
 Failure mapping: N/A — this tool always succeeds and returns a handoff summary.`,
+
+  request_onchain_service: `Delegate to AgentA orchestrator for paid on-chain x402 services.
+
+Purpose: When verified web search and official indicators cannot satisfy the request, request paid dataset or analysis from ERC-8004 registered services via AgentA (discover → pay → return).
+
+When NOT to use: Before exhausting lookup_official_indicator and search_verified_evidence (max 2 searches/turn).
+
+Input fields:
+- intent (required): what paid on-chain data or service is needed
+- capabilityHint (optional): ERC-8004 tag e.g. csv-analysis, marine-dataset, file-storage
+- budgetUsdc (optional): max spend; auto-approval up to $0.05
+
+Failure mapping:
+- permission → budget exceeded or user approval needed; explain and ask user
+- not_found → no registered service for capability; note gap in brief
+- system_error → on-chain delegation failed; do not retry blindly`,
 };
 
 // ── Error category to agent behavior mapping ──────────────────────────────

@@ -8,7 +8,7 @@ export default function MarketplacePage() {
       <SiteHeader />
       <main className="flex-grow px-4 sm:px-6 py-10 max-w-6xl mx-auto w-full">
         <header className="mb-10 glass-prism rounded-2xl p-6 sm:p-8">
-          <p className="label-caps text-muted mb-2">Rachax402</p>
+          <p className="label-caps text-muted mb-2">Antiphon</p>
           <h1 className="font-display text-3xl sm:text-4xl font-bold text-primary tracking-tight mb-2">
             SDG Agent Marketplace
           </h1>

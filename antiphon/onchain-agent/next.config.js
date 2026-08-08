@@ -28,22 +28,6 @@ const nextConfig = {
   // "build" script uses --webpack so Turbopack (which ignores this) is not used.
   // Subpath imports must be listed individually — Webpack does not auto-cover them.
   serverExternalPackages: [
-    // Storacha — root + subpaths used in storachaProvider.ts
-    "@storacha/client",
-    "@storacha/client/stores/memory",
-    "@storacha/client/proof",
-    "@storacha/client/principal/ed25519",
-    "@storacha/upload-client",
-    "@storacha/filecoin-client",
-    "@storacha/capabilities",
-
-    // ucanto stack (Storacha internals)
-    "@ucanto/core",
-    "@ucanto/client",
-    "@ucanto/interface",
-    "@ucanto/principal",
-    "@ucanto/transport",
-
     // x402 payment protocol
     "@x402/fetch",
     "@x402/evm",

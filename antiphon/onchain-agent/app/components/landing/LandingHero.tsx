@@ -9,7 +9,7 @@ export function LandingHero() {
       <div className="max-w-6xl mx-auto w-full relative z-10 grid lg:grid-cols-2 gap-10 lg:gap-14 items-center">
         <div className="hero-glass-panel glass-prism text-center lg:text-left order-2 lg:order-1">
           <p className="label-caps text-muted mb-5 tracking-widest">
-            Rachax402 · Agent-to-agent coordination
+            Antiphon · Agent-to-agent coordination
           </p>
 
           <h1 className="font-display text-4xl sm:text-5xl lg:text-[3.25rem] font-bold tracking-tight leading-[1.06]">
