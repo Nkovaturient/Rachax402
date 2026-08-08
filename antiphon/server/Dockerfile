@@ -47,12 +47,13 @@ COPY --chown=agentb:agentb package.json       .
 USER agentb
 
 # ── Health check ──────────────────────────────────────────────────
-# Uses PORT (Railway) or service default; both servers listen on PORT when set.
-#   analyzer → PORT || PROVIDER_PORT (8001)
-#   storage  → PORT (8000)
-# Railway injects these; wget is available in alpine.
+# analyzer → PROVIDER_PORT (default 8001); storage → PORT (default 8000)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
-  CMD wget -qO- "http://localhost:${PROVIDER_PORT:-${PORT:-8000}}/health" || exit 1
+  CMD sh -c 'if [ "$SERVICE_TYPE" = "analyzer" ]; then \
+    wget -qO- "http://localhost:${PROVIDER_PORT:-8001}/health" || exit 1; \
+  else \
+    wget -qO- "http://localhost:${PORT:-8000}/health" || exit 1; \
+  fi'
 
 # ── Entrypoint ────────────────────────────────────────────────────
 CMD ["sh", "-c", "\
