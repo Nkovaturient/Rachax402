@@ -14,7 +14,7 @@
 
 [![ERC-8004](https://img.shields.io/badge/ERC--8004-Agent%20Identity%20%26%20Reputation-7c3aed?style=flat-square)](https://eips.ethereum.org/EIPS/eip-8004)
 [![x402](https://img.shields.io/badge/x402-HTTP%20Payments-10b981?style=flat-square)](https://www.x402.org/)
-[![Storacha](https://img.shields.io/badge/Storacha-IPFS%20%2B%20Filecoin-ef4444?style=flat-square)](https://docs.storacha.network/)
+[![Pinata](https://img.shields.io/badge/Pinata-IPFS-6C5CE7?style=flat-square)](https://docs.pinata.cloud/)
 [![AgentKit](https://img.shields.io/badge/Coinbase-AgentKit-0052FF?style=flat-square&logo=coinbase)](https://docs.cdp.coinbase.com/agentkit/)
 [![Base](https://img.shields.io/badge/Base-Sepolia%20%7C%20Mainnet-0052FF?style=flat-square)](https://docs.base.org/)
 [![Claude](https://img.shields.io/badge/Claude-Sonnet%204.6-D97706?style=flat-square)](https://anthropic.com)
@@ -60,7 +60,7 @@ User → AgentA (orchestrator) → [ERC-8004 discover] → [x402 pay] → AgentB
 │  Rachax402 — Confirmed Production Metrics                        │
 ├────────────────────────────────┬─────────────────────────────────┤
 │  ERC-8004 on-chain discovery   │  ~2.5 s                         │
-│  Free IPFS staging (Storacha)  │  ~3 s    (235 KB CSV)           │
+│  Free IPFS staging (Pinata)    │  ~3 s    (235 KB CSV)           │
 │  x402 payment settlement       │  ~3–4 s  (Permit2 → Base L2)    │
 │  CSV analysis (1 000 rows)     │  ~7 s    (post-payment)         │
 │  File storage (1.4 MB)         │  ~13 s   (x402 + IPFS upload)   │
@@ -89,7 +89,7 @@ User → AgentA (orchestrator) → [ERC-8004 discover] → [x402 pay] → AgentB
            │                        → getAgentsByCapability
            │                        → agentCard CID → IPFS endpoint
            │
-           ├─ stageCsvForAnalysis() ──► Storacha (free, AgentA creds)
+           ├─ stageCsvForAnalysis() ──► Pinata (free, AgentA creds)
            │                            → inputCID
            │
            ├─ X402 POST /analyze ──► DataAnalyzer (Railway)
@@ -100,7 +100,7 @@ User → AgentA (orchestrator) → [ERC-8004 discover] → [x402 pay] → AgentB
            │   → 0.01 USDC settled on-chain
            │   ← resultCID + statistics
            │
-           ├─ paidStoreFile() ──► StorachaStorage (Railway)
+           ├─ paidStoreFile() ──► IpfsStorage (Pinata backend)
            │   x402 Permit2 → $0.10 USDC → IPFS CID
            │
            └─ postReputation() ──► ERC-8004 ReputationRegistry
@@ -111,9 +111,9 @@ User → AgentA (orchestrator) → [ERC-8004 discover] → [x402 pay] → AgentB
 
 | Service | Host | Endpoint | Price |
 |---|---|---|---|
-| **DataAnalyzer** | Railway | `POST /analyze` | $0.01 USDC |
-| **StorachaStorage** | Railway | `POST /upload` | $0.10 USDC |
-| **StorachaStorage** | Railway | `GET /retrieve` | $0.005 USDC |
+| **DataAnalyzer** | Railway / local `:8001` | `POST /analyze` | $0.01 USDC |
+| **IpfsStorage** | Railway / local `:8000` | `POST /upload` | $0.10 USDC |
+| **IpfsStorage** | Railway / local `:8000` | `GET /retrieve` | $0.005 USDC |
 | **ERC-8004 Identity** | Base Sepolia | `0x1352abA587fFbbC398d7ecAEA31e2948D3aFE4Fb` | [Deployed Contract on Base Sepolia](https://sepolia.basescan.org/address/0x1352abA587fFbbC398d7ecAEA31e2948D3aFE4Fb#code) |
 | **ERC-8004 Reputation** | Base Sepolia | `0x3FdD300147940a35F32AdF6De36b3358DA682B5c` | [Deployed Contract on Base Sepolia](https://sepolia.basescan.org/address/0x3FdD300147940a35F32AdF6De36b3358DA682B5c) |
 
@@ -179,15 +179,18 @@ Rachax402/
 │   │   │   ├── route.ts          ← streaming, heartbeat, file context
 │   │   │   ├── create-agent.ts   ← system prompt, tool merging
 │   │   │   ├── prepare-agentkit.ts ← CDP smart wallet + Permit2 bootstrap
-│   │   │   ├── file-context.ts   ← server-side file store
+│   │   │   ├── file-context.ts   ← conversation-scoped file store
 │   │   │   └── providers/
-│   │   │       ├── erc8004Provider.ts   ← discover, reputation tools
-│   │   │       └── storachaProvider.ts  ← staging + paid store/retrieve
+│   │   │       ├── erc8004Provider.ts   ← discover, health, x402 invoke, reputation
+│   │   │       └── pinataProvider.ts    ← staging + paid store/retrieve
+│   │   ├── lib/agent/
+│   │   │   ├── erc8004-discovery.ts     ← shared on-chain discovery + dev localhost fallback
+│   │   │   └── x402-invoke.ts
 │   │   └── Dockerfile
-│   ├── server/                   ← AgentB Railway services
-│   │   ├── agentB-server.js      ← DataAnalyzer (x402-gated)
-│   │   ├── storacha-server.js    ← StorachaStorage (x402-gated)
-│   │   └── initStoracha.js
+│   ├── server/                   ← AgentB x402 services
+│   │   ├── agentB-server.js      ← DataAnalyzer (x402-gated, port 8001)
+│   │   ├── pinata-server.js      ← IpfsStorage (x402-gated, port 8000)
+│   │   └── initPinata.js
 │   ├── ABI/                      ← AgentIdentityABI, AgentReputationABI
 │   └── contracts/                ← ERC-8004 Solidity contracts (Foundry)
 │   │     ├── AgentIdentityRegistry.sol      ← Register Agents services on ERC-8004
@@ -217,8 +220,8 @@ cp .env.example .env
 | `CDP_API_KEY_ID` | [portal.cdp.coinbase.com](https://portal.cdp.coinbase.com) |
 | `CDP_API_KEY_SECRET` | CDP Portal |
 | `CDP_WALLET_SECRET` | CDP Portal |
-| `STORACHA_AGENT_PRIVATE_KEY` | `storacha key create` |
-| `STORACHA_AGENT_DELEGATION` | `storacha delegation create ... --base64` |
+| `PINATA_JWT` | [Pinata](https://app.pinata.cloud/) — scopes: `pinFileToIPFS`, `pinJSONToIPFS` |
+| `PINATA_GATEWAY` | e.g. `gateway.pinata.cloud` |
 | `ERC8004_IDENTITY_REGISTRY` | `0x1352abA587fFbbC398d7ecAEA31e2948D3aFE4Fb` |
 | `ERC8004_REPUTATION_REGISTRY` | `0x3FdD300147940a35F32AdF6De36b3358DA682B5c` |
 | `AGENT_A_PRIVATE_KEY` | EOA key for reputation writes |
@@ -234,18 +237,23 @@ On first start, `ensurePermit2Approval()` runs automatically — watch for:
 [AgentKit] Ready on base-sepolia
 ```
 
-### AgentB Services (Railway)
+### AgentB Services (local or Railway)
 
 ```bash
 cd antiphon/server
 npm install
 cp .env.example .env
-npm run dev          # StorachaStorage :8000
-npm run dev:agent    # DataAnalyzer    :8001
+npm run dev:both     # storage :8000 + analyzer :8001
+# or individually:
+npm run dev          # IpfsStorage :8000
+npm run dev:agent    # DataAnalyzer :8001
 ```
 
 **Health checks:**
 ```bash
+curl http://localhost:8000/health   # storage
+curl http://localhost:8001/health   # analyzer
+# production:
 curl https://rachax402-analyzer-service.up.railway.app/health
 curl https://rachax402-storacha-service.up.railway.app/health
 ```
@@ -281,7 +289,7 @@ Add to `.cursor/mcp.json`:
 | ERC-8004 IdentityRegistry | [`0x1352abA587fFbbC398d7ecAEA31e2948D3aFE4Fb`](https://sepolia.basescan.org/address/0x1352abA587fFbbC398d7ecAEA31e2948D3aFE4Fb) |
 | ERC-8004 ReputationRegistry | [`0x3FdD300147940a35F32AdF6De36b3358DA682B5c`](https://sepolia.basescan.org/address/0x3FdD300147940a35F32AdF6De36b3358DA682B5c) |
 | DataAnalyzer Agent wallet addr | [`0xEAB418143643557C74479d38E773A64E35B5f6c9`](https://sepolia.basescan.org/address/0xEAB418143643557C74479d38E773A64E35B5f6c9) |
-| StorachaStorage Agent wallet addr | [`0x9D48b65Bb45f144CBC5662Fd3Fd011659371D0f8`](https://sepolia.basescan.org/address/0x9D48b65Bb45f144CBC5662Fd3Fd011659371D0f8) |
+| IpfsStorage Agent wallet addr | [`0x9D48b65Bb45f144CBC5662Fd3Fd011659371D0f8`](https://sepolia.basescan.org/address/0x9D48b65Bb45f144CBC5662Fd3Fd011659371D0f8) |
 
 ---
 
@@ -292,7 +300,7 @@ Add to `.cursor/mcp.json`:
 | **Orchestrator** | Claude Sonnet 4.6 + Coinbase AgentKit + Next.js 16 |
 | **Payments** | x402 · USDC · Permit2 (EIP-1271, gasless signing) |
 | **Identity & Reputation** | ERC-8004 (AgentIdentityRegistry + AgentReputationRegistry) |
-| **Storage** | Storacha (IPFS + Filecoin) |
+| **Storage** | Pinata (IPFS) |
 | **Chain** | Base Sepolia → Base Mainnet |
 | **Services** | Node.js · Express · `@x402/express` |
 | **Wallet** | CDP Smart Wallet (ERC-4337) |
@@ -319,9 +327,30 @@ See [`TROUBLESHOOTING.md`](./x402-payment-troubleshooting.md) for the full recor
 
 | Component | Platform | Notes |
 |---|---|---|
-| DataAnalyzer | Railway | `SERVICE_TYPE=analyzer` |
-| StorachaStorage | Railway | `SERVICE_TYPE=storage` |
-| onchain-agent | Autonome / Railway | Requires `output: 'standalone'` in `next.config.js` · persistent `/app/wallet` volume · set `WALLET_DATA_JSON` env var |
+| DataAnalyzer | Railway | `SERVICE_TYPE=analyzer`, `PROVIDER_PORT=8001` (do **not** set `PORT=8000`) |
+| IpfsStorage | Railway | `SERVICE_TYPE=storage`, `PORT=8000` |
+| onchain-agent | Autonome / Railway | `output: 'standalone'` · persistent `/app/wallet` volume · `WALLET_DATA_JSON` |
+
+### Required env vars at deploy
+
+**onchain-agent** — add/set:
+- `PINATA_JWT`, `PINATA_GATEWAY` (free CSV staging)
+- `ERC8004_IDENTITY_REGISTRY`, `ERC8004_REPUTATION_REGISTRY`, `AGENT_A_PRIVATE_KEY`
+- `NEXT_PUBLIC_SUPABASE_*`, `DATABASE_URL`, `DIRECT_URL` (build + runtime)
+
+**server (both Railway services)** — add/set:
+- `PINATA_JWT`, `PINATA_GATEWAY` (scopes: `pinFileToIPFS`, `pinJSONToIPFS`)
+- `CDP_API_KEY_ID`, `CDP_API_KEY_SECRET` (production facilitator)
+- `X402_NETWORK=eip155:84532`
+- Analyzer only: `PROVIDER_WALLET_ADDRESS`, `PROVIDER_PORT=8001`
+- Storage only: `RECIPIENT_ADDRESS`, `PORT=8000`
+
+After deploy, update on-chain agent cards with live URLs:
+```bash
+ANALYZER_URL=https://your-analyzer.up.railway.app \
+STORAGE_URL=https://your-storage.up.railway.app \
+node update-services.js
+```
 
 Docker build:
 ```bash
@@ -331,6 +360,13 @@ docker run -p 3000:3000 \
   -e WALLET_DATA_JSON='{"ownerAddress":"0x2E84...","smartWalletAddress":"0xf2e2..."}' \
   --env-file .env \
   rachax402-agent
+```
+
+```bash
+cd antiphon/server
+docker build -t rachax402-server .
+docker run --env-file .env -e SERVICE_TYPE=storage  -p 8000:8000 rachax402-server
+docker run --env-file .env -e SERVICE_TYPE=analyzer -e PROVIDER_PORT=8001 -p 8001:8001 rachax402-server
 ```
 
 ---
@@ -352,6 +388,6 @@ docker run -p 3000:3000 \
 - [x402 Protocol](https://www.x402.org/) · [coinbase/x402](https://github.com/coinbase/x402)
 - [ERC-8004](https://eips.ethereum.org/EIPS/eip-8004) · [polus-dev/erc-8004](https://github.com/polus-dev/erc-8004)
 - [Coinbase AgentKit](https://docs.cdp.coinbase.com/agentkit/)
-- [Storacha Docs](https://docs.storacha.network/)
+- [Pinata Docs](https://docs.pinata.cloud/)
 - [Base Docs](https://docs.base.org/)
 - [Circle USDC Faucet](https://faucet.circle.com) (testnet)

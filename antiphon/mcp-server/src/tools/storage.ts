@@ -1,16 +1,17 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { fetchWithX402Payment } from "../lib/x402.js";
+import { ipfsGatewayUrl } from "../lib/pinata.js";
 
 export function registerStorageTools(server: McpServer) {
   server.tool(
     "store_file",
-    "Pay AgentB StorachaStorage via x402 and upload a file to IPFS. Requires the endpoint from discover_service('store'). Returns the file's CID and IPFS gateway URL.",
+    "Pay AgentB IPFS storage via x402 and upload a file. Requires endpoint from discover_service('store').",
     {
       base64Data: z.string().describe("Base64-encoded file content"),
       filename: z.string().describe("Original filename with extension e.g. 'report.pdf'"),
       mimeType: z.string().default("application/octet-stream").describe("MIME type of the file"),
-      endpoint: z.string().describe("StorachaStorage /upload endpoint URL from discover_service"),
+      endpoint: z.string().describe("IPFS /upload endpoint URL from discover_service"),
     },
     async ({ base64Data, filename, mimeType, endpoint }) => {
       try {
@@ -38,7 +39,7 @@ export function registerStorageTools(server: McpServer) {
             text: JSON.stringify({
               success: true, cid, filename,
               sizeBytes: buffer.length,
-              ipfsUrl: `https://w3s.link/ipfs/${cid}`,
+              ipfsUrl: ipfsGatewayUrl(String(cid)),
             }),
           }],
         };
@@ -51,10 +52,10 @@ export function registerStorageTools(server: McpServer) {
 
   server.tool(
     "retrieve_file",
-    "Pay AgentB StorachaStorage via x402 and retrieve a file by CID. Requires the endpoint from discover_service('retrieve'). Returns the IPFS gateway URL and file metadata.",
+    "Pay AgentB IPFS storage via x402 and retrieve a file by CID.",
     {
       cid: z.string().describe("IPFS CID of the file to retrieve"),
-      endpoint: z.string().describe("StorachaStorage /retrieve endpoint URL from discover_service"),
+      endpoint: z.string().describe("IPFS /retrieve endpoint URL from discover_service"),
     },
     async ({ cid, endpoint }) => {
       try {
@@ -79,7 +80,7 @@ export function registerStorageTools(server: McpServer) {
               cid: returnedCid,
               contentType,
               sizeBytes: arrayBuffer.byteLength,
-              ipfsUrl: `https://w3s.link/ipfs/${returnedCid}`,
+              ipfsUrl: ipfsGatewayUrl(returnedCid),
               note: `Retrieved ${sizeKb}KB. Access via IPFS gateway URL.`,
             }),
           }],

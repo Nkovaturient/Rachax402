@@ -8,12 +8,14 @@ import { errorResult, type SdgToolResult } from "@/lib/sdg/tool-errors";
 import { TOOL_DESCRIPTIONS } from "@/lib/sdg/toolkit";
 import { parseUploadedFile, SUPPORTED_LABEL } from "@/lib/sdg/file-parser";
 import type { WebSearchPayload } from "@/lib/search/types";
+import { delegateOnchainService } from "@/lib/agent/onchain-delegate";
 
 const MAX_SEARCHES_PER_TURN = 2;
 
 export function getSdgToolkitTools(options?: {
   agentSlug?: string;
-  budget?: { count: number };
+  budget?: { searchCount: number };
+  conversationId?: string;
 }) {
   const agent =
     options?.agentSlug && options.agentSlug !== "agenta"
@@ -76,8 +78,8 @@ export function getSdgToolkitTools(options?: {
     execute: async ({ query }): Promise<SdgToolResult<WebSearchPayload>> => {
       const budget = options?.budget;
       if (budget) {
-        budget.count += 1;
-        if (budget.count > MAX_SEARCHES_PER_TURN) {
+        budget.searchCount += 1;
+        if (budget.searchCount > MAX_SEARCHES_PER_TURN) {
           return {
             ok: false,
             error_category: "rate_limit",
@@ -119,7 +121,7 @@ export function getSdgToolkitTools(options?: {
         .describe("Exact filename from the user's [File attached: \"...\"] message"),
     }),
     execute: async ({ filename }): Promise<SdgToolResult> => {
-      const pending = getPendingFile();
+      const pending = getPendingFile(options?.conversationId);
       if (!pending) {
         return {
           ok: false,
@@ -182,6 +184,55 @@ export function getSdgToolkitTools(options?: {
           },
           handoff_note:
             "This brief was composed by the SDG agent from tool results. All claims should be verified by a human before action.",
+        },
+      };
+    },
+  });
+
+  // ── request_onchain_service (AgentA delegation) ────────────────────────
+
+  tools.request_onchain_service = tool({
+    description:
+      "Delegate to AgentA orchestrator for paid on-chain x402 data/services when official search is insufficient. " +
+      "Use only when verified web search cannot satisfy the request. Returns structured result with endpoint and citations.",
+    inputSchema: z.object({
+      intent: z.string().describe("What paid on-chain data or service is needed"),
+      capabilityHint: z
+        .string()
+        .optional()
+        .describe("ERC-8004 capability tag e.g. csv-analysis, marine-dataset, file-storage"),
+      budgetUsdc: z
+        .number()
+        .optional()
+        .describe("Max USDC to spend (default 0.1, auto-approval up to 0.05)"),
+    }),
+    execute: async ({ intent, capabilityHint, budgetUsdc }): Promise<SdgToolResult> => {
+      const result = await delegateOnchainService({
+        intent,
+        capabilityHint,
+        budgetUsdc,
+      });
+
+      if (!result.ok) {
+        return {
+          ok: false,
+          error_category: "permission",
+          error: result.error ?? "On-chain delegation failed",
+        };
+      }
+
+      return {
+        ok: true,
+        data: {
+          intent: result.intent,
+          capability: result.capability,
+          endpoint: result.endpoint,
+          price: result.price,
+          agentAddress: result.agentAddress,
+          result: result.response,
+          citation: result.endpoint
+            ? `On-chain x402 service: ${result.endpoint}`
+            : undefined,
         },
       };
     },

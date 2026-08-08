@@ -22,12 +22,12 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Rachax402",
+  title: "Antiphon",
   icons: {
     icon: "/Rachax402-logo.png",
   },
   description:
-    "Decentralized agent-to-agent service discovery and payment-gated execution: ERC-8004, x402, Storacha.",
+    "Agent marketplace with ERC-8004 discovery, x402 payments, and Pinata IPFS — research agents meet autonomous commerce.",
 };
 
 export default function RootLayout({
@@ -53,7 +53,7 @@ export default function RootLayout({
                   rel="noopener noreferrer"
                   className="text-secondary hover:text-storacha transition"
                 >
-                  Rachax402
+                  Antiphon
                 </a>
                 {" · "}
                 Discover, Pay, Verify — on-chain.

@@ -16,7 +16,7 @@ const agentaChatConfig: ChatWorkspaceConfig = {
   sdgTitle: "Orchestrator",
   description: agentaConfig.description,
   exampleTasks: [],
-  headerLabel: "AgentA · ERC-8004 · x402 · Storacha · Base",
+  headerLabel: "AgentA · ERC-8004 · x402 · Pinata · Base",
   placeholder: "Ask AgentA to analyze, store, or retrieve…",
   emptyTitle: "AgentA is ready",
 };

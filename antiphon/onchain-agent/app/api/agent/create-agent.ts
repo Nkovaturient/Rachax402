@@ -12,12 +12,13 @@ import { jsonSchema } from "ai";
 import { prepareAgentkitAndWalletProvider } from "./prepare-agentkit";
 import { normalizeCdpNetworkId } from "./network-config";
 import { getERC8004Tools } from "./providers/erc8004Provider";
-import { getStorachaTools } from "./providers/storachaProvider";
+import { getPinataTools } from "./providers/pinataProvider";
 import { getSdgToolkitTools } from "./providers/sdgToolkitProvider";
 import { getSystemPromptBlock, isSdgSlug } from "@/lib/data/registry";
 import { getAgentaBasePrompt } from "./system-prompts/agenta";
 import { getSdgBasePrompt } from "./system-prompts/sdg-base";
 import { resolveRelease, updatePromptHash } from "@/lib/agent/release";
+import type { TurnWorkflowState } from "./workflow-state";
 
 /**
  * Converts AgentKit tools from AI SDK v4 format (`parameters`) to v5 format (`inputSchema`).
@@ -79,7 +80,11 @@ type Agent = {
 export const agentCache = new Map<string, Agent>();
 
 export function invalidateAgentCache(agentSlug: string) {
-  agentCache.delete(agentSlug);
+  for (const key of [...agentCache.keys()]) {
+    if (key === agentSlug || key.startsWith(`${agentSlug}:`)) {
+      agentCache.delete(key);
+    }
+  }
 }
 
 /** DeepSeek API model id (sent on the wire). */
@@ -130,7 +135,11 @@ function createDeepSeekProvider() {
   });
 }
 
-async function createAgentaAgent(releaseId: string): Promise<Agent> {
+async function createAgentaAgent(
+  releaseId: string,
+  modelId: string,
+  options?: { conversationId?: string; workflow?: TurnWorkflowState },
+): Promise<Agent> {
   if (!process.env.ANTHROPIC_API_KEY) {
     throw new Error("ANTHROPIC_API_KEY required in .env");
   }
@@ -170,17 +179,23 @@ async function createAgentaAgent(releaseId: string): Promise<Agent> {
   }
 
   const agentKitTools = sanitizeAgentKitTools(rawAgentKitTools);
-  const erc8004Tools = getERC8004Tools(cdpNetworkId);
-  const storachaTools = getStorachaTools(walletProvider);
+  const erc8004Tools = getERC8004Tools(cdpNetworkId, {
+    walletProvider,
+    workflow: options?.workflow,
+  });
+  const pinataTools = getPinataTools(walletProvider, {
+    conversationId: options?.conversationId,
+    workflow: options?.workflow,
+  });
 
   const tools = {
     ...agentKitTools,
     ...erc8004Tools,
-    ...storachaTools,
+    ...pinataTools,
   };
 
   return {
-    model: anthropic("claude-sonnet-4-6"),
+    model: anthropic(modelId || "claude-sonnet-4-6"),
     system: fullSystem,
     tools,
     maxSteps: 15,
@@ -188,7 +203,12 @@ async function createAgentaAgent(releaseId: string): Promise<Agent> {
   };
 }
 
-async function createSdgAgent(slug: string, releaseId: string): Promise<Agent> {
+async function createSdgAgent(
+  slug: string,
+  releaseId: string,
+  modelId: string,
+  options?: { conversationId?: string },
+): Promise<Agent> {
   if (!process.env.DEEPSEEK_API_KEY) {
     throw new Error("DEEPSEEK_API_KEY required in .env");
   }
@@ -201,10 +221,19 @@ async function createSdgAgent(slug: string, releaseId: string): Promise<Agent> {
 
   await updatePromptHash(releaseId, fullSystem);
 
-  const tools = getSdgToolkitTools({ agentSlug: slug });
+  const tools = getSdgToolkitTools({
+    agentSlug: slug,
+    conversationId: options?.conversationId,
+  });
+
+  const resolvedModel = modelId || DEEPSEEK_CHAT_MODEL;
 
   return {
-    model: deepseek.chat(DEEPSEEK_OPENAI_COMPAT_MODEL_ID),
+    model: deepseek.chat(
+      resolvedModel === DEEPSEEK_CHAT_MODEL
+        ? DEEPSEEK_OPENAI_COMPAT_MODEL_ID
+        : resolvedModel,
+    ),
     system: fullSystem,
     tools,
     maxSteps: 12,
@@ -214,9 +243,12 @@ async function createSdgAgent(slug: string, releaseId: string): Promise<Agent> {
 
 export async function createAgent(options?: {
   agentSlug?: string;
+  conversationId?: string;
+  workflow?: TurnWorkflowState;
 }): Promise<Agent> {
   const slug = options?.agentSlug ?? "agenta";
-  const cached = agentCache.get(slug);
+  const cacheKey = `${slug}:${options?.conversationId ?? "default"}`;
+  const cached = agentCache.get(cacheKey);
   if (cached) return cached;
 
   const release = await resolveRelease(slug);
@@ -224,11 +256,16 @@ export async function createAgent(options?: {
   let agent: Agent;
 
   if (isSdgSlug(slug)) {
-    agent = await createSdgAgent(slug, release.id);
+    agent = await createSdgAgent(slug, release.id, release.modelId, {
+      conversationId: options?.conversationId,
+    });
   } else {
-    agent = await createAgentaAgent(release.id);
+    agent = await createAgentaAgent(release.id, release.modelId, {
+      conversationId: options?.conversationId,
+      workflow: options?.workflow,
+    });
   }
 
-  agentCache.set(slug, agent);
+  agentCache.set(cacheKey, agent);
   return agent;
 }

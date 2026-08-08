@@ -14,6 +14,7 @@ import { getWebSearchTool } from "./providers/webSearchProvider";
 import { getSdgToolkitTools } from "./providers/sdgToolkitProvider";
 import { ModelMessage, streamText, stepCountIs } from "ai";
 import { setPendingFile, clearPendingFile } from "./file-context";
+import { createTurnWorkflowState } from "./workflow-state";
 import { getSessionUser } from "@/lib/auth/get-session-user";
 import { isSdgSlug } from "@/lib/data/registry";
 import {
@@ -44,6 +45,12 @@ async function _handlePost(req: Request) {
     let userMessage = "";
     let conversationId: string | undefined;
     let agentSlug = "agenta";
+    let pendingFile: {
+      base64: string;
+      filename: string;
+      mimeType: string;
+      sizeBytes: number;
+    } | null = null;
 
     if (contentType.includes("multipart/form-data")) {
       const formData = await req.formData();
@@ -61,12 +68,12 @@ async function _handlePost(req: Request) {
           file.name.toLowerCase().endsWith(".csv") || file.type === "text/csv";
         const mimeType = file.type || "application/octet-stream";
 
-        setPendingFile({
+        pendingFile = {
           base64,
           filename: file.name,
           mimeType,
           sizeBytes: file.size,
-        });
+        };
 
         if (isSdgSlug(agentSlug)) {
           userMessage +=
@@ -79,7 +86,7 @@ async function _handlePost(req: Request) {
             `[File attached: "${file.name}" (${(file.size / 1024).toFixed(1)} KB, ${mimeType})]` +
             (isCSV
               ? "\nPlease analyze this CSV file. Call stageCsvForAnalysis with the filename above."
-              : "\nPlease store this file on Storacha. Call paidStoreFile with the filename above.");
+              : "\nPlease store this file on IPFS. Call paidStoreFile with the filename above.");
         }
       }
     } else {
@@ -99,19 +106,33 @@ async function _handlePost(req: Request) {
       conversationId,
     );
 
+    if (pendingFile) {
+      setPendingFile(conversation.id, pendingFile);
+    }
+
+    const workflow = createTurnWorkflowState(agentSlug);
+
     await persistUserMessage(conversation.id, userMessage);
 
     const historyForModel: ModelMessage[] = await loadModelMessages(
       conversation.id,
     );
 
-    const agent = await createAgent({ agentSlug });
-    const searchBudget = { count: 0 };
+    const agent = await createAgent({
+      agentSlug,
+      conversationId: conversation.id,
+      workflow,
+    });
+    const searchBudget = workflow.sdg;
 
     const tools = isSdgSlug(agentSlug)
       ? {
           ...agent.tools,
-          ...getSdgToolkitTools({ agentSlug, budget: searchBudget }),
+          ...getSdgToolkitTools({
+            agentSlug,
+            budget: searchBudget,
+            conversationId: conversation.id,
+          }),
         }
       : {
           ...agent.tools,
@@ -211,7 +232,7 @@ async function _handlePost(req: Request) {
           console.error("[AgentA] stream error:", err);
         } finally {
           clearInterval(heartbeat);
-          clearPendingFile();
+          clearPendingFile(conversation.id);
           if (!controllerClosed) {
             controllerClosed = true;
             controller.close();

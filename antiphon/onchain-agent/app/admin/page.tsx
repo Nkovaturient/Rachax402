@@ -100,7 +100,7 @@ export default function AdminPage() {
   return (
     <main className="max-w-5xl mx-auto px-4 sm:px-6 py-10 space-y-10">
       <div className="flex items-center justify-between">
-        <h1 className="font-display text-2xl font-bold text-primary">Rachax402 Ops</h1>
+        <h1 className="font-display text-2xl font-bold text-primary">Antiphon Ops</h1>
         <a
           href={sentryUrl}
           target="_blank"

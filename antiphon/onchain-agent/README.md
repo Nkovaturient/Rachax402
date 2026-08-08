@@ -1,6 +1,6 @@
 # Rachax402 — Onchain Agent
 
-![Storacha](https://img.shields.io/badge/Storacha-red?logo=Storacha) ![Next.js](https://img.shields.io/badge/Next.js-16-black?logo=next.js) ![AgentKit](https://img.shields.io/badge/Coinbase-AgentKit-0052FF?logo=coinbase) ![Base](https://img.shields.io/badge/Base-Sepolia-0052FF) ![x402](https://img.shields.io/badge/x402-payments-10b981)
+![Pinata](https://img.shields.io/badge/Pinata-IPFS-6C5CE7) ![Next.js](https://img.shields.io/badge/Next.js-16-black?logo=next.js) ![AgentKit](https://img.shields.io/badge/Coinbase-AgentKit-0052FF?logo=coinbase) ![Base](https://img.shields.io/badge/Base-Sepolia-0052FF) ![x402](https://img.shields.io/badge/x402-payments-10b981)
 
 Two products, one app: **AgentA** (on-chain commerce orchestrator) and **17 SDG research agents** (cited evidence → action briefs).
 
@@ -20,7 +20,7 @@ Two products, one app: **AgentA** (on-chain commerce orchestrator) and **17 SDG 
 │  │ AgentKit +   │          │ mcp-server      │                  │
 │  │ ERC-8004 +   │          │ (stdio)         │                  │
 │  │ x402 +       │          │ 8 tools         │                  │
-│  │ Storacha     │          └──────┬──────────┘                  │
+│  │ Pinata       │          └──────┬──────────┘                  │
 │  ├──────────────┤                 │                             │
 │  │ SDG agents:  │                 │                             │
 │  │ sdg-01…17    │                 │                             │
@@ -41,8 +41,8 @@ Two products, one app: **AgentA** (on-chain commerce orchestrator) and **17 SDG 
 ┌─────────────────────────────────────────────────────────────────┐
 │               Railway Services (x402-gated)                     │
 │  DataAnalyzer    POST /analyze   $0.01 USDC  0xEAB418...       │
-│  StorachaStorage POST /upload    $0.10 USDC  0x9D48b6...       │
-│                  GET  /retrieve  $0.005 USDC                    │
+│  IpfsStorage     POST /upload    $0.10 USDC  0x9D48b6...       │
+│  (Pinata)        GET  /retrieve  $0.005 USDC                    │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -50,7 +50,7 @@ Two products, one app: **AgentA** (on-chain commerce orchestrator) and **17 SDG 
 
 | Product | Route | Stack | User outcome |
 |---------|-------|-------|-------------|
-| **AgentA** | `/agent/agenta` | AgentKit + ERC-8004 + x402 + Storacha | Discover → pay → verify on-chain services |
+| **AgentA** | `/agent/agenta` | AgentKit + ERC-8004 + x402 + Pinata | Discover → pay → verify on-chain services |
 | **SDG agents** | `/agent/sdg-01`…`/agent/sdg-17` | SDG toolkit (5 tools): lookup, search, CSV, brief, escalate | Grounded evidence → analysis → action brief → human executes |
 
 SDG agents never receive on-chain tools or protocol copy. Each is a lightweight persona overlay on a shared research toolkit.
@@ -76,7 +76,9 @@ User types CID → discoverService('retrieve') → paidRetrieveFile(cid, endpoin
 → X402 GET /retrieve → paid → file
 ```
 
-File bytes are stored server-side (`file-context.ts`). Tools receive only `filename` — no base64 in LLM output.
+File bytes are stored per-conversation server-side (`file-context.ts`). Tools receive only `filename` — no base64 in LLM output.
+
+In local dev (`npm run dev`), discovery routes paid calls to `localhost:8000` (storage) and `localhost:8001` (analyzer) instead of Railway URLs. Override with `LOCAL_STORAGE_URL` / `LOCAL_ANALYZER_URL`.
 
 ## Getting Started
 
@@ -86,7 +88,7 @@ File bytes are stored server-side (`file-context.ts`). Tools receive only `filen
 |-----|--------|
 | `ANTHROPIC_API_KEY` | [Anthropic Console](https://console.anthropic.com/) |
 | `CDP_API_KEY_NAME` + `CDP_API_KEY_PRIVATE_KEY` | [CDP Portal](https://portal.cdp.coinbase.com/) |
-| `STORACHA_AGENT_PRIVATE_KEY` + `STORACHA_AGENT_DELEGATION` | Storacha CLI (`storacha key create`) |
+| `PINATA_JWT` + `PINATA_GATEWAY` | [Pinata](https://app.pinata.cloud/) — free staging (`pinFileToIPFS` + `pinJSONToIPFS` scopes) |
 | `NEXT_PUBLIC_SUPABASE_URL` + `NEXT_PUBLIC_SUPABASE_ANON_KEY` | [Supabase Dashboard](https://supabase.com/dashboard) → Project Settings → API |
 | `DATABASE_URL` + `DIRECT_URL` | Supabase → Project Settings → Database (pooler + direct) |
 | `TAVILY_API_KEY` | [Tavily](https://tavily.com/) — powers SDG agent `search_verified_evidence` |
@@ -129,7 +131,7 @@ Sign in at `/login`, then open **AgentA** at `/agent/agenta` or browse SDG agent
 
 ## MCP Server (`../mcp-server/`)
 
-Standalone MCP server exposing the same ERC-8004 + x402 + Storacha capabilities to any LLM host via stdio transport.
+Standalone MCP server exposing the same ERC-8004 + x402 + Pinata capabilities to any LLM host via stdio transport.
 
 ### Tools Exposed
 
@@ -137,10 +139,10 @@ Standalone MCP server exposing the same ERC-8004 + x402 + Storacha capabilities 
 |------|-------------|
 | `discover_service` | Query ERC-8004 for capability → endpoint, price, reputation |
 | `get_agent_reputation` | Read on-chain reputation score for any agent address |
-| `stage_csv` | Free upload CSV to Storacha IPFS → inputCID |
+| `stage_csv` | Free upload CSV to Pinata IPFS → inputCID |
 | `analyze_csv` | Pay DataAnalyzer via x402, submit inputCID → resultCID + stats |
-| `store_file` | Pay StorachaStorage via x402, upload file → CID |
-| `retrieve_file` | Pay StorachaStorage via x402, retrieve by CID |
+| `store_file` | Pay IpfsStorage via x402, upload file → CID |
+| `retrieve_file` | Pay IpfsStorage via x402, retrieve by CID |
 | `check_can_rate` | Check ERC-8004 rate limit before posting reputation |
 | `post_reputation` | Post on-chain 1–5 rating with proof CID |
 
@@ -149,7 +151,7 @@ Standalone MCP server exposing the same ERC-8004 + x402 + Storacha capabilities 
 ```sh
 cd mcp-server
 npm install && npm run build
-cp .env.example .env   # fill in RACHAX402_PRIVATE_KEY + Storacha keys
+cp .env.example .env   # fill in RACHAX402_PRIVATE_KEY + PINATA_JWT
 ```
 
 ### Connect to Cursor
@@ -253,5 +255,5 @@ Run before activating a new release via `/admin`.
 | ERC-8004 IdentityRegistry | `0x1352abA587fFbbC398d7ecAEA31e2948D3aFE4Fb` | Base Sepolia |
 | ERC-8004 ReputationRegistry | `0x3FdD300147940a35F32AdF6De36b3358DA682B5c` | Base Sepolia |
 | DataAnalyzer Agent | `0xEAB418143643557C74479d38E773A64E35B5f6c9` | Base Sepolia |
-| StorachaStorage Agent | `0x9D48b65Bb45f144CBC5662Fd3Fd011659371D0f8` | Base Sepolia |
+| IpfsStorage Agent (Pinata) | `0x9D48b65Bb45f144CBC5662Fd3Fd011659371D0f8` | Base Sepolia |
 

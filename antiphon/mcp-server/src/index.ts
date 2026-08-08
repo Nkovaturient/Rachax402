@@ -1,19 +1,10 @@
 #!/usr/bin/env node
 /**
- * @rachax402/mcp-server
+ * @antiphon/mcp-server — ERC-8004 discovery, x402 payments, Pinata IPFS staging.
+ * Transport: stdio (Cursor, Claude Desktop, any MCP client)
  *
- * MCP server exposing ERC-8004 agent discovery, x402 payment,
- * and Storacha storage tools for any LLM host.
- *
- * Transport: stdio (works with Cursor, Claude Desktop, any MCP client)
- *
- * Required env vars:
- *   RACHAX402_PRIVATE_KEY          — EOA for x402 payments + reputation posting
- *   BASE_RPC_URL                   — defaults to https://sepolia.base.org
- *   STORACHA_AGENT_PRIVATE_KEY     — for free CSV staging
- *   STORACHA_AGENT_DELEGATION      — Storacha space delegation
- *   ERC8004_IDENTITY_REGISTRY      — defaults to deployed address
- *   ERC8004_REPUTATION_REGISTRY    — defaults to deployed address
+ * Env: RACHAX402_PRIVATE_KEY, PINATA_JWT, PINATA_GATEWAY, BASE_RPC_URL,
+ *      ERC8004_IDENTITY_REGISTRY, ERC8004_REPUTATION_REGISTRY, X402_NETWORK=eip155:84532
  */
 
 import { config } from "dotenv";
@@ -25,19 +16,21 @@ import { registerDiscoverTools } from "./tools/discover.js";
 import { registerAnalyzeTools } from "./tools/analyze.js";
 import { registerStorageTools } from "./tools/storage.js";
 import { registerReputationTools } from "./tools/reputation.js";
+import { registerInvokeTools } from "./tools/invoke.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 config({ path: resolve(__dirname, "..", ".env") });
 
 const server = new McpServer({
-  name: "rachax402",
-  version: "0.1.0",
+  name: "antiphon",
+  version: "0.2.0",
 });
 
 registerDiscoverTools(server);
 registerAnalyzeTools(server);
 registerStorageTools(server);
 registerReputationTools(server);
+registerInvokeTools(server);
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
