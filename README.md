@@ -1,18 +1,16 @@
 <div align="center">
 
-<!-- ═══════════════════ BANNER IMAGE ════════════════════════════ -->
-<!-- <img src="https://github.com/user-attachments/assets/a235e9ad-63d8-4908-aa4a-049dd3b5d529" alt="Rachax402 Banner" width="100%" />
+<img src="https://github.com/user-attachments/assets/455798d7-a5cb-46b4-b6b0-a3374522f22b" alt="Antiphon" width="120" />
 
-<br /> -->
-
-<!-- ═══════════════════ LOGO ════════════════════════════════════ -->
-<img src="https://github.com/user-attachments/assets/455798d7-a5cb-46b4-b6b0-a3374522f22b" alt="Rachax402" width="120" />
-
-<h1>Rachax402</h1>
+<h1>Antiphon</h1>
 
 <p><strong>Autonomous Agent-to-Agent Coordination · Pay-Per-Task · On-Chain Verifiable</strong></p>
 
 [![ERC-8004](https://img.shields.io/badge/ERC--8004-Agent%20Identity%20%26%20Reputation-7c3aed?style=flat-square)](https://eips.ethereum.org/EIPS/eip-8004)
+[![Live](https://img.shields.io/badge/Live-antiphon--sdg.vercel.app-7c3aed?style=flat-square)](https://antiphon-sdg.vercel.app/)
+[![Storage](https://img.shields.io/badge/Storage-rachax402--services-6C5CE7?style=flat-square)](https://rachax402-services.vercel.app/health)
+[![Analyzer](https://img.shields.io/badge/Analyzer-rachax402--analyzer-10b981?style=flat-square)](https://rachax402-analyzer.vercel.app/health)
+[![ERC-8004](https://img.shields.io/badge/ERC--8004-Identity%20%26%20Reputation-7c3aed?style=flat-square)](https://eips.ethereum.org/EIPS/eip-8004)
 [![x402](https://img.shields.io/badge/x402-HTTP%20Payments-10b981?style=flat-square)](https://www.x402.org/)
 [![Pinata](https://img.shields.io/badge/Pinata-IPFS-6C5CE7?style=flat-square)](https://docs.pinata.cloud/)
 [![AgentKit](https://img.shields.io/badge/Coinbase-AgentKit-0052FF?style=flat-square&logo=coinbase)](https://docs.cdp.coinbase.com/agentkit/)
@@ -23,60 +21,75 @@
 
 <br />
 
-> **Autonomous agents that discover, pay, and verify — on-chain, in under 25 seconds.**
+> **Rachax402** is the protocol repo. **Antiphon** is the live product — autonomous agents that discover services on-chain, pay via x402, and post verifiable reputation.
+
+[Open App](https://antiphon-sdg.vercel.app/) · [Demo](https://youtu.be/1_hBdSQvzKU) · [Wiki](https://github.com/Nkovaturient/Rachax402/wiki)
 
 </div>
 
 ---
 
-## What is Rachax402?
+## Overview
 
 A decentralised **agent-to-agent coordination marketplace** where AI agents discover services on-chain, pay autonomously via the x402 HTTP payment protocol, execute tasks, and post verifiable reputation — with no human in the loop.
 
 **Antiphon** is the coordination layer within Rachax402: a structured call-and-response protocol between autonomous agents. From the Greek *antiphōnos* — "sounding in response."
 
+```mermaid
+flowchart LR
+  U[User] --> A[AgentA · Antiphon UI]
+  A -->|ERC-8004 discover| R[(Base Sepolia)]
+  A -->|free staging| P[Pinata IPFS]
+  A -->|x402 Permit2| S[IpfsStorage]
+  A -->|x402 Permit2| B[DataAnalyzer]
+  S --> P
+  B --> P
+  A -->|reputation| R
+  S -.-> A
+  B -.-> A
+
 ```
-User → AgentA (orchestrator) → [ERC-8004 discover] → [x402 pay] → AgentB (service) → result → User
-                                         ↓
-                               [on-chain reputation posted]
-```
+
+
+| Layer | What it does |
+|---|---|
+| **Antiphon** ([app](https://antiphon-sdg.vercel.app/)) | AgentA orchestrator + 17 SDG research agents |
+| **AgentB services** | x402-gated storage & CSV analysis |
+| **On-chain** | ERC-8004 identity, reputation, agent cards |
+| **Payments** | USDC via Permit2 + CDP facilitator (gasless for AgentA) |
 
 ---
 
 ## ⚡ Live Performance 🟢
 
-- [Demo](https://youtu.be/1_hBdSQvzKU) 🌟
-- [Check it out](https://rachax402-agent.up.railway.app/) ❇️
-- [Read Wiki for Ideation and Investment](https://github.com/Nkovaturient/Rachax402/wiki/%F0%9F%92%B3-Project-Costs-&-Credits-%F0%9F%9F%A2-%F0%9F%92%B8%F0%9F%A4%91)
-[![Demo](https://img.youtube.com/vi/1_hBdSQvzKU/maxresdefault.jpg)](https://youtu.be/1_hBdSQvzKU)
+| Component | URL | Health |
+|---|---|---|
+| **Antiphon UI** | [antiphon-sdg.vercel.app](https://antiphon-sdg.vercel.app/) | [/api/health](https://antiphon-sdg.vercel.app/api/health) |
+| **Agent Storage** | [rachax402-services.vercel.app](https://rachax402-services.vercel.app/) | [/health](https://rachax402-services.vercel.app/health) |
+| **DataAnalyzer Agent** | [rachax402-analyzer.vercel.app](https://rachax402-analyzer.vercel.app/) | [/health](https://rachax402-analyzer.vercel.app/health) |
 
-<!-- ═══════════════════ METRICS VISUAL ══════════════════════════ -->
-<!-- Optional: replace with /assets/metrics-bar.avif              -->
+---
 
-> Measured from confirmed production runs on Base Sepolia. ❇️
+## Metrics
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│  Rachax402 — Confirmed Production Metrics                        │
-├────────────────────────────────┬─────────────────────────────────┤
-│  ERC-8004 on-chain discovery   │  ~2.5 s                         │
-│  Free IPFS staging (Pinata)    │  ~3 s    (235 KB CSV)           │
-│  x402 payment settlement       │  ~3–4 s  (Permit2 → Base L2)    │
-│  CSV analysis (1 000 rows)     │  ~7 s    (post-payment)         │
-│  File storage (1.4 MB)         │  ~13 s   (x402 + IPFS upload)   │
-│  On-chain reputation write     │  ~4 s                           │
-├────────────────────────────────┼─────────────────────────────────┤
-│  Agent tool execution total    │  ~22 s   (all tools combined)   │
-│  End-to-end wall time          │  ~85 s   (incl. LLM reasoning)  │
-│  USDC per CSV analysis         │  $0.01                          │
-│  USDC per file upload          │  $0.10                          │
-│  Payment method                │  Permit2 + EIP-1271 (gasless)   │
-└──────────────────────────────────────────────────────────────────┘
+┌────────────────────────────┬──────────────────┐
+│ ERC-8004 discovery         │ ~2.5 s           │
+│ Pinata CSV staging (free)  │ ~3 s             │
+│ x402 settlement            │ ~3–4 s           │
+│ CSV analysis (post-pay)    │ ~7 s             │
+│ Full AgentA tool run       │ ~22 s            │
+│ USDC / analyze             │ $0.01            │
+│ USDC / upload              │ $0.10            │
+└────────────────────────────┴──────────────────┘
 ```
 
 ---
 
-## Architecture
+## Workflows
+
+<details>
+<summary><strong>CSV analysis</strong></summary>
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -204,31 +217,19 @@ Rachax402/
 
 ## Quick Start
 
-### AgentA (onchain-agent)
+<details>
+<summary><strong>Local (npm)</strong></summary>
 
+**1. AgentB services**
 ```bash
-cd antiphon/onchain-agent
-pnpm install
-cp .env.example .env
+cd antiphon/server && npm install && cp .env.example .env
+npm run dev:both    # storage :8000 + analyzer :8001
 ```
 
-**Required env vars:**
-
-| Variable | Source |
-|---|---|
-| `ANTHROPIC_API_KEY` | [console.anthropic.com](https://console.anthropic.com) |
-| `CDP_API_KEY_ID` | [portal.cdp.coinbase.com](https://portal.cdp.coinbase.com) |
-| `CDP_API_KEY_SECRET` | CDP Portal |
-| `CDP_WALLET_SECRET` | CDP Portal |
-| `PINATA_JWT` | [Pinata](https://app.pinata.cloud/) — scopes: `pinFileToIPFS`, `pinJSONToIPFS` |
-| `PINATA_GATEWAY` | e.g. `gateway.pinata.cloud` |
-| `ERC8004_IDENTITY_REGISTRY` | `0x1352abA587fFbbC398d7ecAEA31e2948D3aFE4Fb` |
-| `ERC8004_REPUTATION_REGISTRY` | `0x3FdD300147940a35F32AdF6De36b3358DA682B5c` |
-| `AGENT_A_PRIVATE_KEY` | EOA key for reputation writes |
-| `NETWORK_ID` | `base-sepolia` |
-
+**2. Antiphon UI**
 ```bash
-pnpm dev   # http://localhost:3000
+cd antiphon/onchain-agent && npm install && cp .env.example .env
+npm run db:push && npm run dev    # http://localhost:3000
 ```
 
 On first start, `ensurePermit2Approval()` runs automatically — watch for:
@@ -237,48 +238,51 @@ On first start, `ensurePermit2Approval()` runs automatically — watch for:
 [AgentKit] Ready on base-sepolia
 ```
 
-### AgentB Services (local or Railway)
+</details>
+
+<details>
+<summary><strong>Local (Docker)</strong></summary>
+
+**AgentB — two containers, one image**
+```bash
+cd antiphon/server && docker build -t antiphon-server .
+docker run --env-file .env -e SERVICE_TYPE=storage  -p 8000:8000 antiphon-server
+docker run --env-file .env -e SERVICE_TYPE=analyzer -e PROVIDER_PORT=8001 -p 8001:8001 antiphon-server
+```
+
+**Antiphon UI**
+```bash
+cd antiphon/onchain-agent
+docker build -t antiphon-agent \
+  --build-arg NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL \
+  --build-arg NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY \
+  .
+docker run -p 3000:3000 --env-file .env \
+  -e WALLET_DATA_JSON='{"ownerAddress":"0x...","smartWalletAddress":"0x..."}' \
+  antiphon-agent
+```
+
+</details>
+
+<details>
+<summary><strong>Vercel (production)</strong></summary>
+
+| Project | Root directory | Key env |
+|---|---|---|
+| `antiphon-agent` | `antiphon/onchain-agent` | Supabase, CDP, Pinata, Prisma — see `.env.example` |
+| `rachax402-storage` | `antiphon/server` | `SERVICE_TYPE=storage` |
+| `rachax402-analyzer` | `antiphon/server` | `SERVICE_TYPE=analyzer` |
+
+After deploy, point on-chain agent cards at the Vercel service URLs:
 
 ```bash
 cd antiphon/server
-npm install
-cp .env.example .env
-npm run dev:both     # storage :8000 + analyzer :8001
-# or individually:
-npm run dev          # IpfsStorage :8000
-npm run dev:agent    # DataAnalyzer :8001
+ANALYZER_URL=https://rachax402-analyzer.vercel.app \
+STORAGE_URL=https://rachax402-services.vercel.app \
+node update-services.js
 ```
 
-**Health checks:**
-```bash
-curl http://localhost:8000/health   # storage
-curl http://localhost:8001/health   # analyzer
-# production:
-curl https://rachax402-analyzer-service.up.railway.app/health
-curl https://rachax402-storacha-service.up.railway.app/health
-```
-
-### MCP Server (Cursor / Claude Desktop)
-
-```bash
-cd mcp-server
-npm install && npm run build
-cp .env.example .env
-```
-
-Add to `.cursor/mcp.json`:
-```json
-{
-  "mcpServers": {
-    "rachax402": {
-      "command": "node",
-      "args": ["/absolute/path/to/mcp-server/dist/index.js"]
-    }
-  }
-}
-```
-
-**Exposed tools:** `discover_service` · `stage_csv` · `analyze_csv` · `store_file` · `retrieve_file` · `get_agent_reputation` · `check_can_rate` · `post_reputation`
+</details>
 
 ---
 
@@ -286,25 +290,10 @@ Add to `.cursor/mcp.json`:
 
 | Contract | Address |
 |---|---|
-| ERC-8004 IdentityRegistry | [`0x1352abA587fFbbC398d7ecAEA31e2948D3aFE4Fb`](https://sepolia.basescan.org/address/0x1352abA587fFbbC398d7ecAEA31e2948D3aFE4Fb) |
-| ERC-8004 ReputationRegistry | [`0x3FdD300147940a35F32AdF6De36b3358DA682B5c`](https://sepolia.basescan.org/address/0x3FdD300147940a35F32AdF6De36b3358DA682B5c) |
-| DataAnalyzer Agent wallet addr | [`0xEAB418143643557C74479d38E773A64E35B5f6c9`](https://sepolia.basescan.org/address/0xEAB418143643557C74479d38E773A64E35B5f6c9) |
-| IpfsStorage Agent wallet addr | [`0x9D48b65Bb45f144CBC5662Fd3Fd011659371D0f8`](https://sepolia.basescan.org/address/0x9D48b65Bb45f144CBC5662Fd3Fd011659371D0f8) |
-
----
-
-## Tech Stack
-
-| Layer | Technology |
-|---|---|
-| **Orchestrator** | Claude Sonnet 4.6 + Coinbase AgentKit + Next.js 16 |
-| **Payments** | x402 · USDC · Permit2 (EIP-1271, gasless signing) |
-| **Identity & Reputation** | ERC-8004 (AgentIdentityRegistry + AgentReputationRegistry) |
-| **Storage** | Pinata (IPFS) |
-| **Chain** | Base Sepolia → Base Mainnet |
-| **Services** | Node.js · Express · `@x402/express` |
-| **Wallet** | CDP Smart Wallet (ERC-4337) |
-| **Facilitator** | CDP Production Facilitator |
+| IdentityRegistry | [`0x1352abA587fFbbC398d7ecAEA31e2948D3aFE4Fb`](https://sepolia.basescan.org/address/0x1352abA587fFbbC398d7ecAEA31e2948D3aFE4Fb) |
+| ReputationRegistry | [`0x3FdD300147940a35F32AdF6De36b3358DA682B5c`](https://sepolia.basescan.org/address/0x3FdD300147940a35F32AdF6De36b3358DA682B5c) |
+| DataAnalyzer wallet | `0xEAB418143643557C74479d38E773A64E35B5f6c9` |
+| IpfsStorage wallet | `0x9D48b65Bb45f144CBC5662Fd3Fd011659371D0f8` |
 
 ---
 
@@ -321,53 +310,7 @@ See [`TROUBLESHOOTING.md`](./x402-payment-troubleshooting.md) for the full recor
 | AgentKit schema `type: undefined` | `sanitizeAgentKitTools()` in `create-agent.ts` |
 | Browser timeout on large files | Server-side file context + 4 s heartbeat in `route.ts` |
 
----
-
-## Deployment
-
-| Component | Platform | Notes |
-|---|---|---|
-| DataAnalyzer | Railway | `SERVICE_TYPE=analyzer`, `PROVIDER_PORT=8001` (do **not** set `PORT=8000`) |
-| IpfsStorage | Railway | `SERVICE_TYPE=storage`, `PORT=8000` |
-| onchain-agent | Autonome / Railway | `output: 'standalone'` · persistent `/app/wallet` volume · `WALLET_DATA_JSON` |
-
-### Required env vars at deploy
-
-**onchain-agent** — add/set:
-- `PINATA_JWT`, `PINATA_GATEWAY` (free CSV staging)
-- `ERC8004_IDENTITY_REGISTRY`, `ERC8004_REPUTATION_REGISTRY`, `AGENT_A_PRIVATE_KEY`
-- `NEXT_PUBLIC_SUPABASE_*`, `DATABASE_URL`, `DIRECT_URL` (build + runtime)
-
-**server (both Railway services)** — add/set:
-- `PINATA_JWT`, `PINATA_GATEWAY` (scopes: `pinFileToIPFS`, `pinJSONToIPFS`)
-- `CDP_API_KEY_ID`, `CDP_API_KEY_SECRET` (production facilitator)
-- `X402_NETWORK=eip155:84532`
-- Analyzer only: `PROVIDER_WALLET_ADDRESS`, `PROVIDER_PORT=8001`
-- Storage only: `RECIPIENT_ADDRESS`, `PORT=8000`
-
-After deploy, update on-chain agent cards with live URLs:
-```bash
-ANALYZER_URL=https://your-analyzer.up.railway.app \
-STORAGE_URL=https://your-storage.up.railway.app \
-node update-services.js
-```
-
-Docker build:
-```bash
-cd antiphon/onchain-agent
-docker build -t rachax402-agent .
-docker run -p 3000:3000 \
-  -e WALLET_DATA_JSON='{"ownerAddress":"0x2E84...","smartWalletAddress":"0xf2e2..."}' \
-  --env-file .env \
-  rachax402-agent
-```
-
-```bash
-cd antiphon/server
-docker build -t rachax402-server .
-docker run --env-file .env -e SERVICE_TYPE=storage  -p 8000:8000 rachax402-server
-docker run --env-file .env -e SERVICE_TYPE=analyzer -e PROVIDER_PORT=8001 -p 8001:8001 rachax402-server
-```
+Full notes: [`x402-payment-troubleshooting.md`](./antiphon/onchain-agent/x402-payment-troubleshooting.md)
 
 ---
 
@@ -391,3 +334,4 @@ docker run --env-file .env -e SERVICE_TYPE=analyzer -e PROVIDER_PORT=8001 -p 800
 - [Pinata Docs](https://docs.pinata.cloud/)
 - [Base Docs](https://docs.base.org/)
 - [Circle USDC Faucet](https://faucet.circle.com) (testnet)
+

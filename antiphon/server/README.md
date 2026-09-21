@@ -1,184 +1,141 @@
-# Rachax402 AgentB Services
+# Antiphon — AgentB Services
 
-> x402-payment-gated DataAnalyzer + StorachaStorage with on-chain Bazaar discovery. 
+[![Storage](https://img.shields.io/badge/Live-Storage-6C5CE7?style=flat-square)](https://rachax402-services.vercel.app/health) [![Analyzer](https://img.shields.io/badge/Live-Analyzer-10b981?style=flat-square)](https://rachax402-analyzer.vercel.app/health) [![x402](https://img.shields.io/badge/x402-gated-10b981?style=flat-square)](https://www.x402.org/) [![Pinata](https://img.shields.io/badge/IPFS-Pinata-6C5CE7?style=flat-square)](https://docs.pinata.cloud/) [![Express](https://img.shields.io/badge/Express-5-000?style=flat-square)](https://expressjs.com/)
 
-- Two Express servers, one Docker image, deployed as two independent Railway services. Discovered by AgentA via ERC-8004 on Base Sepolia.
+> x402 payment-gated **DataAnalyzer** + **IpfsStorage** (Pinata backend). Discovered by AgentA via ERC-8004 on Base Sepolia.
 
 ---
 
 ## Services
 
-| Service | File | Port | Price |
+```mermaid
+flowchart LR
+  A[AgentA] -->|x402 $0.10| UP[POST /upload]
+  A -->|x402 $0.005| RT[GET /retrieve]
+  A -->|x402 $0.01| AN[POST /analyze]
+  UP --> P[Pinata IPFS]
+  RT --> P
+  AN --> P
+```
+
+| Service | File | Live URL | Price |
 |---|---|---|---|
-| StorachaStorage | `storacha-server.js` | 8000 | $0.1 upload · $0.005 retrieve |
-| DataAnalyzer | `agentB-server.js` | 8001 | $0.01 / CSV analysis |
-
----
-
-## Local Development
+| **IpfsStorage** | `pinata-server.js` | [rachax402-services.vercel.app](https://rachax402-services.vercel.app/) | $0.10 upload · $0.005 retrieve |
+| **DataAnalyzer** | `agentB-server.js` | [rachax402-analyzer.vercel.app](https://rachax402-analyzer.vercel.app/) | $0.01 / CSV |
 
 ```bash
-npm install
-
-# StorachaStorage only
-npm run dev
-
-# DataAnalyzer only (separate terminal)
-npm run dev:agent
-
-# Both (dev only — concurrently is a devDependency, not in Docker)
-npm run dev:both
+curl https://rachax402-services.vercel.app/health
+curl https://rachax402-analyzer.vercel.app/health
 ```
 
 ---
 
-## Environment Variables
+## Quick start
+
+<details>
+<summary><strong>npm (local)</strong></summary>
+
+```bash
+npm install && cp .env.example .env
+
+npm run dev          # storage only  → :8000
+npm run dev:agent    # analyzer only → :8001
+npm run dev:both     # both (concurrently — dev only)
+```
+
+</details>
+
+<details>
+<summary><strong>Docker</strong></summary>
+
+One image, two modes via `SERVICE_TYPE`:
+
+```bash
+docker build -t antiphon-server .
+
+docker run --env-file .env -e SERVICE_TYPE=storage \
+  -p 8000:8000 antiphon-server
+
+docker run --env-file .env -e SERVICE_TYPE=analyzer \
+  -e PROVIDER_PORT=8001 -p 8001:8001 antiphon-server
+```
+
+> Docker runs `node` directly — not `npm start` / `dev:both`.
+
+</details>
+
+<details>
+<summary><strong>Vercel (production)</strong></summary>
+
+Deploy **two Vercel projects** from this directory:
+
+| Project | `SERVICE_TYPE` | Key env |
+|---|---|---|
+| `rachax402-storage` | `storage` | `PORT`, `RECIPIENT_ADDRESS`, `PINATA_JWT` |
+| `rachax402-analyzer` | `analyzer` | `PROVIDER_PORT`, `PROVIDER_WALLET_ADDRESS`, `PINATA_JWT` |
+
+| Vercel setting | Value |
+|---|---|
+| Framework | Other |
+| Build / Output | leave empty |
+| Entry | `vercel.json` → `api/index.js` |
+
+Shared: `FACILITATOR_URL`, `X402_NETWORK`, optional `CDP_API_KEY_*`. See `.env.example`.
+
+</details>
+
+---
+
+## Environment
 
 ```bash
 cp .env.example .env
 ```
 
-**StorachaStorage:**
-```
-PORT=8000
-RECIPIENT_ADDRESS=0x9D48b65Bb45f144CBC5662Fd3Fd011659371D0f8
-STORACHA_AGENT_PRIVATE_KEY=   # from: storacha key create
-STORACHA_AGENT_DELEGATION=    # from: storacha delegation create ... --base64
-FACILITATOR_URL=https://x402.org/facilitator
-BASE_RPC_URL=https://sepolia.base.org
-```
-
-**DataAnalyzer:**
-```
-PROVIDER_PORT=8001
-PROVIDER_WALLET_ADDRESS=0xEAB418143643557C74479d38E773A64E35B5f6c9
-STORACHA_AGENT_PRIVATE_KEY=   # same or separate storacha creds
-STORACHA_AGENT_DELEGATION=
-FACILITATOR_URL=https://x402.org/facilitator
-BASE_RPC_URL=https://sepolia.base.org
-```
-
-**Get Storacha credentials:**
-```bash
-npm install -g @storacha/cli
-storacha login
-storacha space create rachax402-storage
-storacha key create
-# → copy output as STORACHA_AGENT_PRIVATE_KEY
-storacha delegation create <AgentDID> \
-  --can 'upload/add' \
-  --can 'space/blob/add' \
-  --can 'space/index/add' \
-  --can 'filecoin/offer' \
-  --base64
-# → copy output as STORACHA_AGENT_DELEGATION
-```
-
----
-
-## Docker
-
-The Dockerfile calls `node` directly via `SERVICE_TYPE` — never `npm start`.
-(`npm start` uses `concurrently` which is a devDependency and not installed in the image.)
-
-```bash
-docker build -t rachax402-server .
-
-# Test StorachaStorage
-docker run --env-file .env -e SERVICE_TYPE=storage -p 8000:8000 rachax402-server
-
-# Test DataAnalyzer
-docker run --env-file .env -e SERVICE_TYPE=analyzer \
-  -e PROVIDER_PORT=8001 -p 8001:8001 rachax402-server
-```
-
----
-
-## Railway Deployment
-
-Two services, same repo, same root (`antiphon/server/`).
-
-**Service 1 — StorachaStorage:**
-```
-SERVICE_TYPE=storage
-PORT=8000
-RECIPIENT_ADDRESS=0x9D48b65Bb45f144CBC5662Fd3Fd011659371D0f8
-FACILITATOR_URL=https://x402.org/facilitator
-BASE_RPC_URL=https://sepolia.base.org
-STORACHA_AGENT_PRIVATE_KEY=...
-STORACHA_AGENT_DELEGATION=...
-```
-
-**Service 2 — DataAnalyzer:**
-```
-SERVICE_TYPE=analyzer
-PORT=8001
-PROVIDER_PORT=8001
-PROVIDER_WALLET_ADDRESS=0xEAB418143643557C74479d38E773A64E35B5f6c9
-FACILITATOR_URL=https://x402.org/facilitator
-BASE_RPC_URL=https://sepolia.base.org
-STORACHA_AGENT_PRIVATE_KEY=...
-STORACHA_AGENT_DELEGATION=...
-```
-
-After both services deploy, update ERC-8004 agent cards so AgentA discovers the Railway URLs:
-```bash
-ANALYZER_URL=https://rachax402-analyzer-service.up.railway.app \
-STORAGE_URL=https://rachax402-storacha-service.up.railway.app \
-node update-agent-cards.js
-```
-
-Verify:
-```bash
-curl https://rachax402-analyzer-service.up.railway.app/health
-curl https://rachax402-storacha-service.up.railway.app/health
-```
+| Variable | Storage | Analyzer |
+|---|---|---|
+| `SERVICE_TYPE` | `storage` | `analyzer` |
+| `RECIPIENT_ADDRESS` | ✓ | — |
+| `PROVIDER_WALLET_ADDRESS` | — | ✓ |
+| `PINATA_JWT` | ✓ | ✓ |
+| `PINATA_GATEWAY` | ✓ | ✓ |
+| `FACILITATOR_URL` | ✓ | ✓ |
+| `X402_NETWORK` | ✓ | ✓ |
 
 ---
 
 ## API
 
-### POST /upload — $0.1
-```bash
-curl -X POST http://localhost:8000/upload \
-  -F "file=@data.csv" \
-  -H "X-PAYMENT: <proof>"
-```
-→ `{ status: "success", data: { cid, filename, size, url } }`
+| Method | Path | Price | Body |
+|---|---|---|---|
+| `POST` | `/upload` | $0.10 | `multipart/form-data` file |
+| `GET` | `/retrieve?cid=` | $0.005 | — |
+| `POST` | `/analyze` | $0.01 | `{ inputCID, requirements }` |
+| `GET` | `/health` | free | — |
 
-### GET /retrieve?cid=... — $0.005
-```bash
-curl "http://localhost:8000/retrieve?cid=bafkrei..." \
-  -H "X-PAYMENT: <proof>"
-```
-→ raw file bytes + `X-CID` header
-
-### POST /analyze — $0.01
-```bash
-curl -X POST http://localhost:8001/analyze \
-  -H "Content-Type: application/json" \
-  -H "X-PAYMENT: <proof>" \
-  -d '{"inputCID":"bafkrei...","requirements":"statistical summary"}'
-```
-→ `{ resultCID, summary, statistics, insights }`
-
-### GET /health — free
-```bash
-curl http://localhost:8000/health
-curl http://localhost:8001/health
-```
+All paid routes return `402` first → client signs Permit2 → retries with `X-Payment`.
 
 ---
 
-## How AgentA Discovers These Services
+## On-chain discovery
 
-AgentA has no hardcoded Railway URLs. The discovery chain:
+AgentA has **no hardcoded service URLs** in production:
 
-1. `discoverService('analyze')` → queries `ERC-8004 IdentityRegistry` on Base Sepolia
-2. `getAgentsByCapability("csv-analysis")` → `[0xEAB418...]`
-3. `getAgentCard(0xEAB418...)` → IPFS CID
-4. Fetch `https://w3s.link/ipfs/<CID>` → `{ endpoint: "https://...railway.app/analyze" }`
-5. `x402ActionProvider.fetchWithPayment(endpoint, ...)` → payment → response
+```
+discoverService('analyze')
+  → ERC-8004 getAgentsByCapability
+  → agentCard CID on IPFS
+  → { endpoint: "https://rachax402-analyzer.vercel.app/analyze" }
+  → x402 fetchWithPayment
+```
+
+After changing deploy URLs:
+
+```bash
+ANALYZER_URL=https://rachax402-analyzer.vercel.app \
+STORAGE_URL=https://rachax402-services.vercel.app \
+node update-services.js
+```
 
 ---
 

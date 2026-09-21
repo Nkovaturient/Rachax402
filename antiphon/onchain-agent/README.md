@@ -1,8 +1,8 @@
-# Rachax402 — Onchain Agent
+# Antiphon — Onchain Agent
 
-![Pinata](https://img.shields.io/badge/Pinata-IPFS-6C5CE7) ![Next.js](https://img.shields.io/badge/Next.js-16-black?logo=next.js) ![AgentKit](https://img.shields.io/badge/Coinbase-AgentKit-0052FF?logo=coinbase) ![Base](https://img.shields.io/badge/Base-Sepolia-0052FF) ![x402](https://img.shields.io/badge/x402-payments-10b981)
+[![Live](https://img.shields.io/badge/Live-antiphon--sdg.vercel.app-7c3aed?style=flat-square)](https://antiphon-sdg.vercel.app/) [![Next.js](https://img.shields.io/badge/Next.js-16-black?logo=next.js)](https://nextjs.org/) [![AgentKit](https://img.shields.io/badge/AgentKit-CDP-0052FF?logo=coinbase)](https://docs.cdp.coinbase.com/agentkit/) [![x402](https://img.shields.io/badge/x402-payments-10b981)](https://www.x402.org/) [![Base](https://img.shields.io/badge/Base-Sepolia-0052FF)](https://docs.base.org/) [![Pinata](https://img.shields.io/badge/Pinata-IPFS-6C5CE7)](https://docs.pinata.cloud/)
 
-Two products, one app: **AgentA** (on-chain commerce orchestrator) and **17 SDG research agents** (cited evidence → action briefs).
+> Part of [Rachax402](https://github.com/Nkovaturient/Rachax402). **AgentA** (on-chain commerce) + **17 SDG agents** (research briefs) in one Next.js app.
 
 ## Architecture
 
@@ -107,24 +107,28 @@ npm run db:push    # or: npm run db:migrate
 **Routes**
 
 | Path | Access |
-|------|--------|
-| `/` | Public landing |
-| `/marketplace` | Public — 17 SDG research agent cards |
-| `/agent/agenta` | AgentA orchestrator (sign in to chat) |
-| `/agent/sdg-01` … `/agent/sdg-17` | SDG arenas (public view; sign in to chat) |
-| `/agent` | Redirects to `/marketplace` |
-| `/login` | Magic link + Google sign-in |
+|---|---|
+| `/` | Landing |
+| `/marketplace` | 17 SDG agent cards |
+| `/agent/agenta` | AgentA (sign in to chat) |
+| `/agent/sdg-*` | SDG arenas |
+| `/login` | Supabase auth |
+| `/admin` | `ADMIN_EMAILS` only |
+| `/api/health` | Health check |
 
-Conversation history is scoped per `userId` + `agentSlug` in Postgres. Run `npm run db:push` after pulling to add the `agentSlug` column.
+---
 
-### Install & Run
+## Quick start
 
-```sh
+<details>
+<summary><strong>npm (recommended for dev)</strong></summary>
+
+```bash
 cd onchain-agent
 npm install
-cp .env.example .env   # fill in keys
-npm run db:push        # first-time schema
-npm run dev            # http://localhost:3000
+cp .env.example .env      # fill all required keys
+npm run db:push           # Supabase Postgres schema
+npm run dev               # http://localhost:3000
 ```
 
 Sign in at `/login`, then open **AgentA** at `/agent/agenta` or browse SDG agents at `/marketplace`.
@@ -132,6 +136,21 @@ Sign in at `/login`, then open **AgentA** at `/agent/agenta` or browse SDG agent
 ## MCP Server (`../mcp-server/`)
 
 Standalone MCP server exposing the same ERC-8004 + x402 + Pinata capabilities to any LLM host via stdio transport.
+
+Add to `.cursor/mcp.json`:
+```json
+{
+  "mcpServers": {
+    "rachax402": {
+      "command": "node",
+      "args": ["/absolute/path/to/mcp-server/dist/index.js"]
+    }
+  }
+}
+```
+
+**Exposed tools:** `discover_service` · `stage_csv` · `analyze_csv` · `store_file` · `retrieve_file` · 
+`get_agent_reputation` · `check_can_rate` · `post_reputation`
 
 ### Tools Exposed
 
@@ -146,28 +165,31 @@ Standalone MCP server exposing the same ERC-8004 + x402 + Pinata capabilities to
 | `check_can_rate` | Check ERC-8004 rate limit before posting reputation |
 | `post_reputation` | Post on-chain 1–5 rating with proof CID |
 
-### Setup
-
 ```sh
 cd mcp-server
 npm install && npm run build
 cp .env.example .env   # fill in RACHAX402_PRIVATE_KEY + PINATA_JWT
 ```
 
-### Connect to Cursor
+---
 
-Add to `.cursor/mcp.json` (workspace root):
+<details>
+<summary><strong>Docker</strong></summary>
+Requires `output: 'standalone'` in `next.config.js` (already set).
 
-```json
-{
-  "mcpServers": {
-    "rachax402": {
-      "command": "node",
-      "args": ["/absolute/path/to/mcp-server/dist/index.js"]
-    }
-  }
-}
+```bash
+docker build -t antiphon-agent \
+  --build-arg NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL \
+  --build-arg NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY \
+  .
+
+docker run -p 3000:3000 --env-file .env \
+  -e WALLET_DATA_JSON='{"ownerAddress":"0x...","smartWalletAddress":"0x..."}' \
+  antiphon-agent
 ```
+
+</details>
+
 
 ### Connect to Claude Desktop
 
@@ -257,3 +279,4 @@ Run before activating a new release via `/admin`.
 | DataAnalyzer Agent | `0xEAB418143643557C74479d38E773A64E35B5f6c9` | Base Sepolia |
 | IpfsStorage Agent (Pinata) | `0x9D48b65Bb45f144CBC5662Fd3Fd011659371D0f8` | Base Sepolia |
 
+[← Rachax402 root](../../README.md) · [AgentB services →](../server/README.md)
