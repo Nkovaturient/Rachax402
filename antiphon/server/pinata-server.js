@@ -17,8 +17,12 @@ import { declareDiscoveryExtension } from '@x402/extensions/bazaar';
 import { facilitator as cdpFacilitator } from '@coinbase/x402';
 import { uploadFileToPinata, retrieveFileFromPinata, ipfsGatewayUrl } from './initPinata.js';
 import dotenv from 'dotenv';
+import { fileURLToPath } from 'url';
 
 dotenv.config();
+
+const isVercel = process.env.VERCEL === '1';
+const isDirectRun = process.argv[1] === fileURLToPath(import.meta.url);
 
 const app = express();
 const PORT = process.env.PORT || 8000;
@@ -291,27 +295,32 @@ async function warmAndInitialize(maxAttempts = 5) {
 }
 
 async function start() {
-  try {
-    await warmAndInitialize();
-
-    const server = app.listen(PORT, () => {
-      console.log(`🚀 Pinata x402 Agent server running on http://localhost:${PORT}`);
-      console.log(`💰 Recipient: ${RECIPIENT_ADDRESS}`);
-      console.log(`🌐 Network: ${NETWORK}`);
-      console.log(`📡 Facilitator: ${useCdp ? 'CDP (production)' : FACILITATOR_URL}`);
-      console.log(`🔍 Bazaar Discovery: ENABLED`);
-      console.log(`\n📋 Available endpoints:`);
-      console.log(`   POST /upload  - $0.1 per upload`);
-      console.log(`   GET /retrieve - $0.005 per retrieval`);
-    });
-    server.on('error', (err) => {
-      console.error(`❌ Pinata storage server failed to bind port ${PORT}:`, err.message);
-      process.exit(1);
-    });
-  } catch (error) {
-    console.error('❌ Failed to start server:', error.message);
+  const server = app.listen(PORT, () => {
+    console.log(`🚀 Pinata x402 Agent server running on http://localhost:${PORT}`);
+    console.log(`💰 Recipient: ${RECIPIENT_ADDRESS}`);
+    console.log(`🌐 Network: ${NETWORK}`);
+    console.log(`📡 Facilitator: ${useCdp ? 'CDP (production)' : FACILITATOR_URL}`);
+    console.log(`🔍 Bazaar Discovery: ENABLED`);
+    console.log(`\n📋 Available endpoints:`);
+    console.log(`   POST /upload  - $0.1 per upload`);
+    console.log(`   GET /retrieve - $0.005 per retrieval`);
+  });
+  server.on('error', (err) => {
+    console.error(`❌ Pinata storage server failed to bind port ${PORT}:`, err.message);
     process.exit(1);
-  }
+  });
 }
 
-start();
+// Warm x402 on cold start (Vercel serverless + local import)
+await warmAndInitialize().catch((err) => {
+  console.warn('⚠️ Pinata warmAndInitialize:', err.message);
+});
+
+export default app;
+
+if (!isVercel && isDirectRun) {
+  start().catch((error) => {
+    console.error('❌ Failed to start server:', error.message);
+    process.exit(1);
+  });
+}

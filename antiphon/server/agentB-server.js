@@ -23,8 +23,12 @@ import { facilitator as cdpFacilitator } from '@coinbase/x402';
 import Papa from 'papaparse';
 import { uploadFileToPinata, ipfsGatewayUrl } from './initPinata.js';
 import dotenv from 'dotenv';
+import { fileURLToPath } from 'url';
 
 dotenv.config();
+
+const isVercel = process.env.VERCEL === '1';
+const isDirectRun = process.argv[1] === fileURLToPath(import.meta.url);
 
 const app = express();
 const PORT = process.env.PROVIDER_PORT || process.env.AGENTB_PORT || 8001;
@@ -399,27 +403,31 @@ async function warmAndInitialize(maxAttempts = 5) {
 }
 
 async function start() {
-  try {
-    await warmAndInitialize();
-
-    const server = app.listen(PORT, () => {
-      console.log(`\n🤖 Agent B Provider running on http://localhost:${PORT}`);
-      console.log(`💰 Recipient: ${RECIPIENT_ADDRESS}`);
-      console.log(`🌐 Network: ${NETWORK}`);
-      console.log(`📡 Facilitator: ${useCdp ? 'CDP (production)' : FACILITATOR_URL}`);
-      console.log(`🔍 Bazaar Discovery: ENABLED`);
-      console.log(`\n📋 Protected endpoints:`);
-      console.log(`   POST /analyze - $0.01 per analysis`);
-      console.log(`\n💡 Ready to process data analysis requests!\n`);
-    });
-    server.on('error', (err) => {
-      console.error(`❌ Agent B failed to bind port ${PORT}:`, err.message);
-      process.exit(1);
-    });
-  } catch (error) {
-    console.error('❌ Failed to start server:', error.message);
+  const server = app.listen(PORT, () => {
+    console.log(`\n🤖 Agent B Provider running on http://localhost:${PORT}`);
+    console.log(`💰 Recipient: ${RECIPIENT_ADDRESS}`);
+    console.log(`🌐 Network: ${NETWORK}`);
+    console.log(`📡 Facilitator: ${useCdp ? 'CDP (production)' : FACILITATOR_URL}`);
+    console.log(`🔍 Bazaar Discovery: ENABLED`);
+    console.log(`\n📋 Protected endpoints:`);
+    console.log(`   POST /analyze - $0.01 per analysis`);
+    console.log(`\n💡 Ready to process data analysis requests!\n`);
+  });
+  server.on('error', (err) => {
+    console.error(`❌ Agent B failed to bind port ${PORT}:`, err.message);
     process.exit(1);
-  }
+  });
 }
 
-start();
+await warmAndInitialize().catch((err) => {
+  console.warn('⚠️ Agent B warmAndInitialize:', err.message);
+});
+
+export default app;
+
+if (!isVercel && isDirectRun) {
+  start().catch((error) => {
+    console.error('❌ Failed to start server:', error.message);
+    process.exit(1);
+  });
+}
