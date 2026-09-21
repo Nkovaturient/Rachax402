@@ -99,6 +99,27 @@ type WalletData = {
   ownerAddress?: Address;
 };
 
+/** Vercel/Railway: no persistent disk — load wallet from env when file is absent. */
+function loadWalletDataFromEnv(): WalletData | null {
+  const json = process.env.WALLET_DATA_JSON?.trim();
+  if (json) {
+    try {
+      const parsed = JSON.parse(json) as WalletData;
+      if (parsed.smartWalletAddress) return parsed;
+    } catch {
+      console.warn("[AgentKit] WALLET_DATA_JSON is set but invalid JSON — ignoring");
+    }
+  }
+
+  const smart = process.env.CDP_SMART_WALLET_ADDRESS?.trim();
+  const owner = process.env.CDP_OWNER_ADDRESS?.trim();
+  if (smart && owner) {
+    return { smartWalletAddress: smart as Address, ownerAddress: owner as Address };
+  }
+
+  return null;
+}
+
 async function ensurePermit2Approval(
   walletProvider: CdpSmartWalletProvider,
   networkId: string
@@ -224,10 +245,10 @@ export async function prepareAgentkitAndWalletProvider(): Promise<{
 
   const networkId = normalizeCdpNetworkId();
 
-  let walletData: WalletData | null = null;
+  let walletData: WalletData | null = loadWalletDataFromEnv();
   let owner: Hex | LocalAccount | undefined = undefined;
 
-  if (fs.existsSync(WALLET_DATA_FILE)) {
+  if (!walletData && fs.existsSync(WALLET_DATA_FILE)) {
     try {
       walletData = JSON.parse(fs.readFileSync(WALLET_DATA_FILE, "utf8")) as WalletData;
       if (walletData.ownerAddress) {
