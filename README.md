@@ -119,6 +119,8 @@ flowchart LR
            └─ postReputation() ──► ERC-8004 ReputationRegistry
                                     5/5 rating + proof CID on-chain
 ```
+</details>
+
 
 ### Deployed Services
 
